@@ -54,10 +54,10 @@ async function ensureStorage() {
   if (error) throw error;
   const exists = (buckets || []).some((bucket) => bucket.id === MEDIA_BUCKET || bucket.name === MEDIA_BUCKET);
   if (!exists) {
-    const { error: createError } = await supabase.storage.createBucket(MEDIA_BUCKET, { public: false, fileSizeLimit: 100 * 1024 * 1024 });
+    const { error: createError } = await supabase.storage.createBucket(MEDIA_BUCKET, { public: false, fileSizeLimit: 50 * 1024 * 1024 });
     if (createError && !/already exists|duplicate/i.test(createError.message)) throw createError;
   } else {
-    try { await supabase.storage.updateBucket(MEDIA_BUCKET, { public: false, fileSizeLimit: 100 * 1024 * 1024 }); } catch {}
+    try { await supabase.storage.updateBucket(MEDIA_BUCKET, { public: false, fileSizeLimit: 50 * 1024 * 1024 }); } catch {}
   }
 }
 
