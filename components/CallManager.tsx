@@ -6,11 +6,13 @@ import { apiFetch } from "@/lib/client-api";
 import type { ProfileId, PublicProfile } from "@/types/chat";
 
 type CallStatus = "ringing" | "accepted" | "rejected" | "ended";
+type CallType = "audio" | "video";
 type CallInfo = {
   id: string;
   callerId: ProfileId;
   calleeId: ProfileId;
   status: CallStatus;
+  callType: CallType;
   createdAt: string;
   answeredAt: string | null;
   endedAt: string | null;
@@ -32,9 +34,13 @@ export default function CallManager({ me }: { me: PublicProfile }) {
   const [call, setCall] = useState<CallInfo | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [muted, setMuted] = useState(false);
+  const [videoOff, setVideoOff] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState("");
+  const [facingMode, setFacingMode] = useState<"user" | "environment">("user");
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
+  const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const callRef = useRef<CallInfo | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -46,6 +52,14 @@ export default function CallManager({ me }: { me: PublicProfile }) {
   const shuttingDownRef = useRef(false);
 
   useEffect(() => { callRef.current = call; }, [call]);
+
+  useEffect(() => {
+    if (call?.callType !== "video") return;
+    if (localVideoRef.current && streamRef.current) {
+      localVideoRef.current.srcObject = streamRef.current;
+      void localVideoRef.current.play().catch(() => undefined);
+    }
+  }, [call, phase, facingMode]);
 
   const closePeer = useCallback(() => {
     shuttingDownRef.current = true;
@@ -60,6 +74,8 @@ export default function CallManager({ me }: { me: PublicProfile }) {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
   }, []);
 
   const clearCall = useCallback((message = "") => {
@@ -68,7 +84,9 @@ export default function CallManager({ me }: { me: PublicProfile }) {
     setCall(null);
     setPhase("idle");
     setMuted(false);
+    setVideoOff(false);
     setElapsed(0);
+    setFacingMode("user");
     setError(message);
     cursorRef.current = 0;
     queuedSignalsRef.current = [];
@@ -144,12 +162,22 @@ export default function CallManager({ me }: { me: PublicProfile }) {
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    if (current.callType === "video" && localVideoRef.current) {
+      localVideoRef.current.srcObject = stream;
+      void localVideoRef.current.play().catch(() => undefined);
+    }
+
     pc.onicecandidate = (event) => {
       if (event.candidate) void sendSignal(current.id, "ice", event.candidate.toJSON()).catch(() => undefined);
     };
     pc.ontrack = (event) => {
       const remoteStream = event.streams[0] || new MediaStream([event.track]);
-      if (remoteAudioRef.current) {
+      if (current.callType === "video") {
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = remoteStream;
+          void remoteVideoRef.current.play().catch(() => undefined);
+        }
+      } else if (remoteAudioRef.current) {
         remoteAudioRef.current.srcObject = remoteStream;
         void remoteAudioRef.current.play().catch(() => undefined);
       }
@@ -167,41 +195,41 @@ export default function CallManager({ me }: { me: PublicProfile }) {
     return pc;
   }, [clearCall, processSignals, sendSignal]);
 
-  const getMic = useCallback(async () => {
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone non disponible sur cet appareil");
+  const getMedia = useCallback(async (callType: CallType, facing: "user" | "environment" = "user") => {
+    if (!navigator.mediaDevices?.getUserMedia) throw new Error("Micro/caméra non disponible sur cet appareil");
     return navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false,
+      video: callType === "video" ? { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } } : false,
     });
   }, []);
 
-  const startOutgoing = useCallback(async (calleeId: ProfileId) => {
+  const startOutgoing = useCallback(async (calleeId: ProfileId, callType: CallType) => {
     if (callRef.current || phase !== "idle") return;
     setError("");
     let stream: MediaStream | null = null;
     try {
-      stream = await getMic();
+      stream = await getMedia(callType, "user");
       const result = await apiFetch<{ call: CallInfo }>("/api/calls", {
         method: "POST",
-        body: JSON.stringify({ calleeId }),
+        body: JSON.stringify({ calleeId, callType }),
       });
       callRef.current = result.call;
       setCall(result.call);
       setPhase("calling");
       const pc = await makePeer(result.call, stream);
-      const offer = await pc.createOffer({ offerToReceiveAudio: true });
+      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: callType === "video" });
       await pc.setLocalDescription(offer);
       await sendSignal(result.call.id, "offer", offer);
     } catch (e) {
       stream?.getTracks().forEach((track) => track.stop());
       clearCall(e instanceof Error ? e.message : "Impossible de lancer l’appel");
     }
-  }, [clearCall, getMic, makePeer, phase, sendSignal]);
+  }, [clearCall, getMedia, makePeer, phase, sendSignal]);
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const id = (event as CustomEvent<{ calleeId?: ProfileId }>).detail?.calleeId;
-      if (id) void startOutgoing(id);
+      const detail = (event as CustomEvent<{ calleeId?: ProfileId; callType?: CallType }>).detail;
+      if (detail?.calleeId) void startOutgoing(detail.calleeId, detail.callType === "video" ? "video" : "audio");
     };
     window.addEventListener("MANUEL_PRO_START_CALL", handler);
     return () => window.removeEventListener("MANUEL_PRO_START_CALL", handler);
@@ -224,7 +252,7 @@ export default function CallManager({ me }: { me: PublicProfile }) {
       } catch {}
     };
     void check();
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void check(); }, 1100);
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void check(); }, 850);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [call, me.id]);
 
@@ -233,7 +261,7 @@ export default function CallManager({ me }: { me: PublicProfile }) {
     let stopped = false;
     const poll = async () => {
       try {
-        const result = await apiFetch<{ call: { status: CallStatus }; signals: SignalRow[] }>(`/api/calls/${call.id}?after=${cursorRef.current}`);
+        const result = await apiFetch<{ call: { status: CallStatus; callType: CallType }; signals: SignalRow[] }>(`/api/calls/${call.id}?after=${cursorRef.current}`);
         if (stopped) return;
         if (result.signals?.length) {
           cursorRef.current = Math.max(cursorRef.current, ...result.signals.map((signal) => Number(signal.id) || 0));
@@ -246,7 +274,7 @@ export default function CallManager({ me }: { me: PublicProfile }) {
       } catch {}
     };
     void poll();
-    const timer = window.setInterval(poll, 650);
+    const timer = window.setInterval(poll, 520);
     return () => { stopped = true; window.clearInterval(timer); };
   }, [call, clearCall, phase, processSignals]);
 
@@ -271,7 +299,7 @@ export default function CallManager({ me }: { me: PublicProfile }) {
     setError("");
     let stream: MediaStream | null = null;
     try {
-      stream = await getMic();
+      stream = await getMedia(current.callType, "user");
       setPhase("connecting");
       await makePeer(current, stream);
       await apiFetch(`/api/calls/${current.id}`, { method: "PATCH", body: JSON.stringify({ action: "accept" }) });
@@ -305,23 +333,82 @@ export default function CallManager({ me }: { me: PublicProfile }) {
     setMuted(next);
   }
 
+  function toggleVideo() {
+    const next = !videoOff;
+    streamRef.current?.getVideoTracks().forEach((track) => { track.enabled = !next; });
+    setVideoOff(next);
+  }
+
+  async function switchCamera() {
+    const current = callRef.current;
+    const pc = pcRef.current;
+    if (!current || current.callType !== "video" || !pc) return;
+    const next = facingMode === "user" ? "environment" : "user";
+    try {
+      const camera = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: next }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      const newTrack = camera.getVideoTracks()[0];
+      const sender = pc.getSenders().find((item) => item.track?.kind === "video");
+      if (!newTrack || !sender) throw new Error("Caméra indisponible");
+      await sender.replaceTrack(newTrack);
+      const stream = streamRef.current;
+      const old = stream?.getVideoTracks()[0];
+      if (stream && old) stream.removeTrack(old);
+      old?.stop();
+      stream?.addTrack(newTrack);
+      setFacingMode(next);
+      setVideoOff(false);
+      if (localVideoRef.current && stream) {
+        localVideoRef.current.srcObject = stream;
+        void localVideoRef.current.play().catch(() => undefined);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Impossible de changer de caméra");
+    }
+  }
+
   if (!call || phase === "idle") return <audio ref={remoteAudioRef} autoPlay playsInline hidden />;
+
   const incoming = phase === "incoming";
-  const subtitle = incoming ? "Appel audio entrant" : phase === "calling" ? "Sonnerie…" : phase === "connecting" ? "Connexion…" : formatTime(elapsed);
+  const connected = phase === "connected";
+  const isVideo = call.callType === "video";
+  const subtitle = incoming
+    ? (isVideo ? "Appel vidéo entrant" : "Appel audio entrant")
+    : phase === "calling"
+      ? "Sonnerie…"
+      : phase === "connecting"
+        ? "Connexion…"
+        : formatTime(elapsed);
 
   return <>
     <audio ref={remoteAudioRef} autoPlay playsInline hidden />
-    <div className="call-overlay" role="dialog" aria-modal="true">
-      <div className="call-panel">
-        <div className="call-pulse"><Avatar src={call.other.avatarUrl} profileId={call.other.id} name={call.other.displayName} size={96} /></div>
-        <h2>{call.other.displayName}</h2>
-        <p>{subtitle}</p>
+    <div className={`call-overlay ${isVideo ? "video-mode" : "audio-mode"}`} role="dialog" aria-modal="true">
+      {isVideo && <div className="video-call-stage">
+        <video ref={remoteVideoRef} className="remote-video" autoPlay playsInline />
+        {!connected && <div className="video-call-placeholder"><Avatar src={call.other.avatarUrl} profileId={call.other.id} name={call.other.displayName} size={104} /><span>{subtitle}</span></div>}
+        <div className="video-call-topbar"><span><strong>{call.other.displayName}</strong><small>{subtitle}</small></span></div>
+        <div className={`local-video-card ${videoOff ? "off" : ""}`}>
+          <video ref={localVideoRef} autoPlay muted playsInline />
+          {videoOff && <span>Caméra coupée</span>}
+        </div>
+      </div>}
+
+      <div className={`call-panel ${isVideo ? "video-controls" : ""}`}>
+        {!isVideo && <>
+          <div className="call-pulse"><Avatar src={call.other.avatarUrl} profileId={call.other.id} name={call.other.displayName} size={100} /></div>
+          <h2>{call.other.displayName}</h2>
+          <p>{subtitle}</p>
+        </>}
         {error && <div className="call-error">{error}</div>}
         {incoming ? <div className="call-actions incoming">
           <button className="call-action decline" onClick={() => void decline()}><span>✕</span><small>Refuser</small></button>
-          <button className="call-action accept" onClick={() => void accept()}><span>📞</span><small>Accepter</small></button>
-        </div> : <div className="call-actions">
-          <button className={`call-action mute ${muted ? "active" : ""}`} onClick={toggleMute}><span>{muted ? "🔇" : "🎙"}</span><small>{muted ? "Réactiver" : "Muet"}</small></button>
+          <button className="call-action accept" onClick={() => void accept()}><span>{isVideo ? "▰" : "📞"}</span><small>Accepter</small></button>
+        </div> : <div className="call-actions active-call-actions">
+          <button className={`call-action mute ${muted ? "active" : ""}`} onClick={toggleMute}><span>{muted ? "🔇" : "🎙"}</span><small>{muted ? "Micro" : "Muet"}</small></button>
+          {isVideo && <button className={`call-action camera ${videoOff ? "active" : ""}`} onClick={toggleVideo}><span>{videoOff ? "◼" : "▰"}</span><small>Caméra</small></button>}
+          {isVideo && <button className="call-action flip" onClick={() => void switchCamera()}><span>↻</span><small>Retourner</small></button>}
           <button className="call-action decline" onClick={() => void hangup()}><span>✕</span><small>Raccrocher</small></button>
         </div>}
       </div>
