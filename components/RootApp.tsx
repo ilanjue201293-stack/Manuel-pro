@@ -5,6 +5,8 @@ import ChatApp from "@/components/ChatApp";
 import LoginScreen from "@/components/LoginScreen";
 import InAppNotifier from "@/components/InAppNotifier";
 import MobileViewportSync from "@/components/MobileViewportSync";
+import CommunicationEnhancements from "@/components/CommunicationEnhancements";
+import CallManager from "@/components/CallManager";
 import { apiFetch } from "@/lib/client-api";
 import type { PublicProfile, UserSettings } from "@/types/chat";
 
@@ -32,6 +34,8 @@ export default function RootApp() {
   return <>
     <MobileViewportSync />
     <ChatApp initialMe={me.profile} initialSettings={me.settings} onLoggedOut={() => { setMe(null); setState("login"); }} />
+    <CommunicationEnhancements />
+    <CallManager me={me.profile} />
     <InAppNotifier />
   </>;
 }
