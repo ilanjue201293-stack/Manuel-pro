@@ -13,6 +13,7 @@ import type { ChatMessage, Conversation, PublicProfile, UserSettings } from "@/t
 
 const REACTIONS = ["👍", "❤️", "😂", "😮", "🔥", "💀"];
 type MeResponse = { profile: PublicProfile; settings: UserSettings };
+type MediaPayload = { path: string; name: string; type: string };
 
 function clock(value: string) {
   return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -20,6 +21,10 @@ function clock(value: string) {
 
 function initials(value: string) {
   return value.trim().slice(0, 2).toUpperCase() || "G";
+}
+
+function sameJson(a: unknown, b: unknown) {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
@@ -40,7 +45,9 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
   const [showGroup, setShowGroup] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const gifRef = useRef<HTMLInputElement>(null);
@@ -50,22 +57,22 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
 
   const loadMe = useCallback(async () => {
     const result = await apiFetch<MeResponse>("/api/me");
-    setMe(result.profile);
-    setSettings(result.settings);
+    setMe((current) => sameJson(current, result.profile) ? current : result.profile);
+    setSettings((current) => sameJson(current, result.settings) ? current : result.settings);
   }, []);
 
   const loadPresence = useCallback(async () => {
     try {
       await apiFetch("/api/presence", { method: "POST", body: "{}" });
       const result = await apiFetch<{ profiles: PublicProfile[] }>("/api/presence");
-      setProfiles(result.profiles);
+      setProfiles((current) => sameJson(current, result.profiles) ? current : result.profiles);
     } catch {}
   }, []);
 
   const loadConversations = useCallback(async () => {
     try {
       const result = await apiFetch<{ conversations: Conversation[] }>("/api/conversations");
-      setConversations(result.conversations);
+      setConversations((current) => sameJson(current, result.conversations) ? current : result.conversations);
       setActiveId((current) => current || (window.innerWidth > 760 ? result.conversations[0]?.id || null : null));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Impossible de charger les discussions");
@@ -75,37 +82,108 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
   const loadMessages = useCallback(async (id: string) => {
     try {
       const result = await apiFetch<{ messages: ChatMessage[] }>(`/api/conversations/${id}/messages`);
-      setMessages(result.messages);
+      setMessages((current) => sameJson(current, result.messages) ? current : result.messages);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Impossible de charger les messages");
     }
   }, []);
 
   useEffect(() => {
-    loadPresence();
-    loadConversations();
-    const a = window.setInterval(loadPresence, 20000);
-    const b = window.setInterval(loadConversations, 5000);
-    return () => { clearInterval(a); clearInterval(b); };
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => undefined);
+    void loadPresence();
+    void loadConversations();
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      void loadPresence();
+      void loadConversations();
+    };
+    const presenceTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadPresence();
+    }, 20000);
+    const conversationTimer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadConversations();
+    }, 4000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      clearInterval(presenceTimer);
+      clearInterval(conversationTimer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [loadPresence, loadConversations]);
 
   useEffect(() => {
     if (!activeId) { setMessages([]); return; }
-    loadMessages(activeId);
-    const timer = window.setInterval(() => loadMessages(activeId), 2500);
+    void loadMessages(activeId);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void loadMessages(activeId);
+    }, 2000);
     return () => clearInterval(timer);
   }, [activeId, loadMessages]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!conversations.length) return;
+    const url = new URL(window.location.href);
+    const requested = url.searchParams.get("conversation");
+    if (requested && conversations.some((conversation) => conversation.id === requested)) {
+      setActiveId(requested);
+      url.searchParams.delete("conversation");
+      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }, [conversations]);
+
+  useEffect(() => {
+    const total = conversations.reduce((sum, conversation) => sum + conversation.unreadCount, 0);
+    const nav = navigator as Navigator & { setAppBadge?: (count?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+    if (total > 0) nav.setAppBadge?.(total).catch(() => undefined);
+    else nav.clearAppBadge?.().catch(() => undefined);
+  }, [conversations]);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages.length]);
 
-  async function send(event?: FormEvent, media?: { path: string; name: string; type: string }) {
+  useEffect(() => {
+    if (!pendingFile) { setPendingUrl(null); return; }
+    const url = URL.createObjectURL(pendingFile);
+    setPendingUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pendingFile]);
+
+  function clearPending() {
+    setPendingFile(null);
+    if (fileRef.current) fileRef.current.value = "";
+    if (gifRef.current) gifRef.current.value = "";
+  }
+
+  function selectFile(file?: File) {
+    if (!file) return;
+    setError("");
+    if (file.size > 50 * 1024 * 1024) {
+      setError("Fichier trop gros (max 50 Mo)");
+      return;
+    }
+    setPendingFile(file);
+  }
+
+  async function uploadSelected(file: File): Promise<MediaPayload> {
+    const signed = await apiFetch<{ path: string; token: string }>("/api/uploads/sign", {
+      method: "POST",
+      body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", size: file.size, kind: "message" }),
+    });
+    const result = await getUploadClient().storage.from("private-media").uploadToSignedUrl(signed.path, signed.token, file, { contentType: file.type || "application/octet-stream" });
+    if (result.error) throw result.error;
+    return { path: signed.path, name: file.name, type: file.type || "application/octet-stream" };
+  }
+
+  async function send(event?: FormEvent) {
     event?.preventDefault();
-    if (!activeId) return;
+    if (!activeId || sending) return;
     const text = draft.trim();
-    if (!text && !media) return;
+    if (!text && !pendingFile) return;
+    setSending(true);
+    setError("");
     try {
+      const media = pendingFile ? await uploadSelected(pendingFile) : null;
       await apiFetch(`/api/conversations/${activeId}/messages`, {
         method: "POST",
         body: JSON.stringify({
@@ -118,30 +196,12 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
       });
       setDraft("");
       setReply(null);
+      clearPending();
       await Promise.all([loadMessages(activeId), loadConversations()]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Envoi impossible");
-    }
-  }
-
-  async function upload(file?: File) {
-    if (!file || !activeId) return;
-    setUploading(true);
-    setError("");
-    try {
-      const signed = await apiFetch<{ path: string; token: string }>("/api/uploads/sign", {
-        method: "POST",
-        body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", size: file.size, kind: "message" }),
-      });
-      const result = await getUploadClient().storage.from("private-media").uploadToSignedUrl(signed.path, signed.token, file, { contentType: file.type || "application/octet-stream" });
-      if (result.error) throw result.error;
-      await send(undefined, { path: signed.path, name: file.name, type: file.type || "application/octet-stream" });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload impossible");
     } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-      if (gifRef.current) gifRef.current.value = "";
+      setSending(false);
     }
   }
 
@@ -208,7 +268,7 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
                 {other ? <Avatar src={other.avatarUrl} profileId={other.id} name={other.displayName} size={46} online={online} /> : <span className="group-avatar">{initials(conversation.title)}</span>}
                 <span className="conversation-copy">
                   <span className="conversation-line"><strong>{conversation.title}</strong>{conversation.lastMessage && <time>{clock(conversation.lastMessage.createdAt)}</time>}</span>
-                  <span className="conversation-preview">{conversation.lastMessage?.content || "Aucun message"}</span>
+                  <span className="conversation-preview">{conversation.lastMessage?.content || (conversation.lastMessage ? "Média" : "Aucun message")}</span>
                 </span>
                 {conversation.unreadCount > 0 && <span className="badge">{conversation.unreadCount}</span>}
               </button>
@@ -247,7 +307,7 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
                     <button onClick={() => { setReply(message); setEditing(null); }}>↩</button>
                     <button onClick={() => setReactionFor(reactionFor === message.id ? null : message.id)}>☺</button>
                     <button onClick={() => setForwarding(message)}>↗</button>
-                    {mine && <button onClick={() => { setEditing(message); setReply(null); setDraft(message.content); }}>✎</button>}
+                    {mine && <button onClick={() => { setEditing(message); setReply(null); setDraft(message.content); clearPending(); }}>✎</button>}
                     {mine && <button onClick={() => remove(message)}>⌫</button>}
                   </div>}
                   {reactionFor === message.id && <div className="reaction-picker">{REACTIONS.map((emoji) => <button key={emoji} onClick={() => react(message.id, emoji)}>{emoji}</button>)}</div>}
@@ -262,13 +322,14 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
           <div className="composer-wrap">
             {error && <button className="error-bar" onClick={() => setError("")}>{error} ×</button>}
             {(reply || editing) && <div className="composer-context"><span><strong>{editing ? "Modification" : `Réponse à ${reply?.senderName}`}</strong><small>{editing?.content || reply?.content || "Média"}</small></span><button onClick={() => { setReply(null); setEditing(null); setDraft(""); }}>×</button></div>}
+            {pendingFile && !editing && <PendingMedia file={pendingFile} url={pendingUrl} onRemove={clearPending} />}
             <form className="composer" onSubmit={editing ? (e) => { e.preventDefault(); saveEdit(); } : send}>
-              <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading}>＋</button>
-              <input hidden ref={fileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.txt,.zip,.doc,.docx" onChange={(e) => upload(e.target.files?.[0])} />
-              <button type="button" className="gif" onClick={() => gifRef.current?.click()} disabled={uploading}>GIF</button>
-              <input hidden ref={gifRef} type="file" accept="image/gif" onChange={(e) => upload(e.target.files?.[0])} />
-              <textarea rows={1} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={uploading ? "Envoi…" : "Écrire un message"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); editing ? saveEdit() : send(); } }} />
-              <button className="send" type="submit">➤</button>
+              <button type="button" onClick={() => fileRef.current?.click()} disabled={sending || Boolean(editing)}>＋</button>
+              <input hidden ref={fileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.txt,.zip,.doc,.docx" onChange={(e) => selectFile(e.target.files?.[0])} />
+              <button type="button" className="gif" onClick={() => gifRef.current?.click()} disabled={sending || Boolean(editing)}>GIF</button>
+              <input hidden ref={gifRef} type="file" accept="image/gif" onChange={(e) => selectFile(e.target.files?.[0])} />
+              <textarea rows={1} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={sending ? "Envoi…" : pendingFile ? "Ajouter un message…" : "Écrire un message"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); editing ? void saveEdit() : void send(); } }} />
+              <button className="send" type="submit" disabled={sending}>{sending ? "…" : "➤"}</button>
             </form>
           </div>
         </>}
@@ -279,6 +340,18 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
       {forwarding && <Modal onClose={() => setForwarding(null)}><div className="modal-title-row"><h2>Transférer vers</h2><button className="icon-button" onClick={() => setForwarding(null)}>×</button></div><div className="forward-list">{conversations.map((c) => <button key={c.id} onClick={() => forward(c.id)}><span>{c.title}</span></button>)}</div></Modal>}
     </main>
   );
+}
+
+function PendingMedia({ file, url, onRemove }: { file: File; url: string | null; onRemove: () => void }) {
+  return <div className="pending-media">
+    <div className="pending-thumb">
+      {url && file.type.startsWith("image/") ? <img src={url} alt="Aperçu" /> : null}
+      {url && file.type.startsWith("video/") ? <video src={url} muted playsInline /> : null}
+      {!file.type.startsWith("image/") && !file.type.startsWith("video/") ? <span>📎</span> : null}
+    </div>
+    <span className="pending-copy"><strong>{file.name}</strong><small>{Math.max(0.1, file.size / 1024 / 1024).toFixed(1)} Mo • sera envoyé avec ton message</small></span>
+    <button type="button" onClick={onRemove} aria-label="Retirer le média">×</button>
+  </div>;
 }
 
 function Media({ message }: { message: ChatMessage }) {
