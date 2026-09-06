@@ -1,0 +1,82 @@
+/* Manuel Pro v6 — long press actions */
+
+/* The old ellipsis trigger remains in the DOM for React state, but is no longer visible. */
+.message-more-v3{display:none!important}
+
+.message-v3 .bubble{
+  -webkit-touch-callout:none;
+  user-select:none;
+  -webkit-user-select:none;
+  touch-action:pan-y;
+}
+
+.message-v3.longpress-open-v6 .bubble{
+  filter:brightness(1.04);
+}
+
+/* Emoji reactions sit immediately under the selected message. */
+.message-v3.longpress-open-v6 .reaction-picker.v3{
+  display:flex!important;
+  position:static!important;
+  width:max-content!important;
+  max-width:100%!important;
+  gap:4px!important;
+  margin:6px 0 0!important;
+  padding:5px!important;
+  border:1px solid rgba(255,255,255,.09)!important;
+  border-radius:14px!important;
+  background:rgba(27,29,35,.97)!important;
+  box-shadow:0 10px 30px rgba(0,0,0,.24)!important;
+  backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+}
+.message-v3.mine.longpress-open-v6 .reaction-picker.v3{align-self:flex-end!important;margin-left:auto!important}
+.message-v3.longpress-open-v6 .reaction-picker.v3 button{
+  width:34px!important;
+  height:34px!important;
+  display:grid!important;
+  place-items:center!important;
+  padding:0!important;
+  border-radius:10px!important;
+  font-size:19px!important;
+  transition:transform .1s ease,background .1s ease!important;
+}
+.message-v3.longpress-open-v6 .reaction-picker.v3 button:active{transform:scale(.9)!important;background:rgba(255,255,255,.1)!important}
+
+/* Actions appear as a compact row directly below the reactions instead of a floating iPad sheet. */
+.message-v3.longpress-open-v6 .message-line-v3{flex-wrap:wrap!important}
+.message-v3.longpress-open-v6 .message-actions-v3{
+  position:static!important;
+  inset:auto!important;
+  order:20!important;
+  flex:0 0 auto!important;
+  display:flex!important;
+  gap:3px!important;
+  margin-top:6px!important;
+  padding:5px!important;
+  border:1px solid rgba(255,255,255,.08)!important;
+  border-radius:13px!important;
+  background:rgba(27,29,35,.97)!important;
+  box-shadow:0 10px 30px rgba(0,0,0,.2)!important;
+}
+.message-v3.mine.longpress-open-v6 .message-actions-v3{margin-left:auto!important}
+.message-v3.longpress-open-v6 .message-actions-v3 button{
+  min-width:36px!important;
+  min-height:34px!important;
+  padding:7px 9px!important;
+  border-radius:9px!important;
+}
+.message-v3.longpress-open-v6 .message-actions-v3 button span{display:inline!important;font-size:.72rem!important}
+
+@media(max-width:760px){
+  .message-v3.longpress-open-v6 .reaction-picker.v3{gap:2px!important;padding:4px!important}
+  .message-v3.longpress-open-v6 .reaction-picker.v3 button{width:32px!important;height:32px!important;font-size:18px!important}
+  .message-v3.longpress-open-v6 .message-actions-v3{
+    width:max-content!important;
+    max-width:100%!important;
+    flex-wrap:wrap!important;
+    justify-content:flex-start!important;
+  }
+  .message-v3.longpress-open-v6 .message-actions-v3 button span{display:none!important}
+  .message-v3.longpress-open-v6 .message-actions-v3 button{min-width:39px!important;padding:8px!important;font-size:17px!important}
+}
