@@ -5,15 +5,15 @@ import { createPortal } from "react-dom";
 
 function updateSeenGroups() {
   const messages = Array.from(document.querySelectorAll<HTMLElement>(".message-v3"));
-  messages.forEach((message) => message.classList.remove("seen-group-v5"));
-
+  const shouldReserveSeen = new Set<HTMLElement>();
   let group: HTMLElement[] = [];
+
   const flush = () => {
     if (!group.length) return;
     const last = group[group.length - 1];
     const isMine = group.every((message) => message.classList.contains("mine"));
     const seen = Boolean(last.querySelector(".seen-inline-v3"));
-    if (isMine && seen) group.forEach((message) => message.classList.add("seen-group-v5"));
+    if (isMine && seen) group.forEach((message) => shouldReserveSeen.add(message));
     group = [];
   };
 
@@ -23,6 +23,10 @@ function updateSeenGroups() {
     if (message.classList.contains("group-end")) flush();
   }
   flush();
+
+  for (const message of messages) {
+    message.classList.toggle("seen-group-v5", shouldReserveSeen.has(message));
+  }
 }
 
 export default function UiPolishV5() {
