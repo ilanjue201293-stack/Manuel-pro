@@ -10,6 +10,7 @@ export default function CallUiV5() {
   const [title, setTitle] = useState("Appel en cours");
   const [duration, setDuration] = useState("0:00");
   const [video, setVideo] = useState(false);
+  const [stale, setStale] = useState(false);
   const connectionSinceRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -19,6 +20,7 @@ export default function CallUiV5() {
       if (!currentOverlay) {
         setHost(null);
         setMinimized(false);
+        setStale(false);
         connectionSinceRef.current = null;
         return;
       }
@@ -47,9 +49,12 @@ export default function CallUiV5() {
         .some((node) => /connexion/i.test(node.textContent || ""));
       if (connecting) {
         if (!connectionSinceRef.current) connectionSinceRef.current = Date.now();
-        if (Date.now() - connectionSinceRef.current > 7000) currentOverlay.classList.add("call-stale-connection-v5");
+        const isStale = Date.now() - connectionSinceRef.current > 7000;
+        setStale(isStale);
+        currentOverlay.classList.toggle("call-stale-connection-v5", isStale);
       } else {
         connectionSinceRef.current = null;
+        setStale(false);
         currentOverlay.classList.remove("call-stale-connection-v5");
       }
     };
@@ -91,8 +96,8 @@ export default function CallUiV5() {
       <button className="call-mini-end-v5" onClick={endCall} aria-label="Raccrocher">✕</button>
     </div>}
 
-    {overlay?.classList.contains("call-stale-connection-v5") && !minimized && (
-      <div className="call-reconnect-v5">Connexion instable — reconnexion automatique…</div>
+    {stale && overlay && !minimized && (
+      <div className="call-reconnect-v5">Connexion instable — reconnexion en cours…</div>
     )}
   </>;
 }
