@@ -20,9 +20,9 @@ export async function POST(request: Request) {
   const size = Number(body.size || 0);
   const kind = body.kind === "avatar" ? "avatar" : "message";
 
-  const max = kind === "avatar" ? 10 * 1024 * 1024 : 100 * 1024 * 1024;
+  const max = kind === "avatar" ? 10 * 1024 * 1024 : 50 * 1024 * 1024;
   if (!Number.isFinite(size) || size <= 0 || size > max) {
-    return NextResponse.json({ error: `Fichier trop gros (max ${kind === "avatar" ? "10" : "100"} Mo)` }, { status: 400 });
+    return NextResponse.json({ error: `Fichier trop gros (max ${kind === "avatar" ? "10" : "50"} Mo)` }, { status: 400 });
   }
 
   if (kind === "avatar" && !contentType.startsWith("image/")) {
