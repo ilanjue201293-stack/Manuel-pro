@@ -3,6 +3,7 @@ import { requireApiSession, isErrorResponse } from "@/lib/api";
 import { fallbackAvatar, isProfileId, PROFILE_NAMES } from "@/lib/profiles";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 import { sendCallPush } from "@/lib/push";
+import { ensureCallTypeColumn } from "@/lib/call-schema";
 import type { ProfileId } from "@/types/chat";
 
 export const runtime = "nodejs";
@@ -16,6 +17,7 @@ function formatCall(row: any, me: ProfileId) {
     callerId: row.caller_id,
     calleeId: row.callee_id,
     status: row.status,
+    callType: row.call_type === "video" ? "video" : "audio",
     createdAt: row.created_at,
     answeredAt: row.answered_at,
     endedAt: row.ended_at,
@@ -27,13 +29,18 @@ function formatCall(row: any, me: ProfileId) {
   };
 }
 
+async function readySupabase() {
+  await ensureCallTypeColumn();
+  return getSupabaseAdmin();
+}
+
 export async function GET() {
   const auth = await requireApiSession();
   if (isErrorResponse(auth)) return auth;
-  const supabase = getSupabaseAdmin();
+  const supabase = await readySupabase();
   const { data, error } = await supabase
     .from("call_sessions")
-    .select("id,caller_id,callee_id,status,created_at,answered_at,ended_at")
+    .select("id,caller_id,callee_id,status,call_type,created_at,answered_at,ended_at")
     .or(`caller_id.eq.${auth.profileId},callee_id.eq.${auth.profileId}`)
     .in("status", ["ringing", "accepted"])
     .order("created_at", { ascending: false })
@@ -43,7 +50,7 @@ export async function GET() {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ call: null });
 
-  if (data.status === "ringing" && Date.now() - new Date(data.created_at).getTime() > 60_000) {
+  if (data.status === "ringing" && Date.now() - new Date(data.created_at).getTime() > 75_000) {
     await supabase.from("call_sessions").update({ status: "ended", ended_at: new Date().toISOString() }).eq("id", data.id);
     return NextResponse.json({ call: null });
   }
@@ -56,11 +63,12 @@ export async function POST(request: Request) {
   if (isErrorResponse(auth)) return auth;
   const body = await request.json().catch(() => ({}));
   const calleeId = body?.calleeId;
+  const callType = body?.callType === "video" ? "video" : "audio";
   if (!isProfileId(calleeId) || calleeId === auth.profileId) {
     return NextResponse.json({ error: "Destinataire invalide" }, { status: 400 });
   }
 
-  const supabase = getSupabaseAdmin();
+  const supabase = await readySupabase();
   const { data: busy } = await supabase
     .from("call_sessions")
     .select("id")
@@ -74,9 +82,10 @@ export async function POST(request: Request) {
     caller_id: auth.profileId,
     callee_id: calleeId,
     status: "ringing",
-  }).select("id,caller_id,callee_id,status,created_at,answered_at,ended_at").single();
+    call_type: callType,
+  }).select("id,caller_id,callee_id,status,call_type,created_at,answered_at,ended_at").single();
 
   if (error || !data) return NextResponse.json({ error: error?.message || "Impossible de lancer l’appel" }, { status: 500 });
-  void sendCallPush({ callerId: auth.profileId, calleeId, callId: data.id }).catch((e) => console.error("Call push failed", e));
+  void sendCallPush({ callerId: auth.profileId, calleeId, callId: data.id, callType }).catch((e) => console.error("Call push failed", e));
   return NextResponse.json({ call: formatCall(data, auth.profileId) });
 }
