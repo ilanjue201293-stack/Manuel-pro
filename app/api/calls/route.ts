@@ -2,90 +2,93 @@ import { NextResponse } from "next/server";
 import { requireApiSession, isErrorResponse } from "@/lib/api";
 import { fallbackAvatar, isProfileId, PROFILE_NAMES } from "@/lib/profiles";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { createRoom, getActiveRoomFor, getRoomMembers, type CallRoomRow } from "@/lib/call-rooms";
 import { sendCallPush } from "@/lib/push";
-import { ensureCallTypeColumn } from "@/lib/call-schema";
 import type { ProfileId } from "@/types/chat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function formatCall(row: any, me: ProfileId) {
-  if (!row) return null;
-  const otherId = (row.caller_id === me ? row.callee_id : row.caller_id) as ProfileId;
+async function formatRoom(room: CallRoomRow, me: ProfileId) {
+  const members = await getRoomMembers(room.id);
+  const supabase = getSupabaseAdmin();
+  const { data: profiles } = await supabase.from("profiles").select("id,display_name,avatar_path");
+  const profileMap = new Map((profiles || []).map((p: any) => [p.id, p]));
+  const threshold = Date.now() - 8_000;
+  const formattedMembers = members.map((member) => {
+    const profile: any = profileMap.get(member.profile_id);
+    return {
+      id: member.profile_id,
+      displayName: profile?.display_name || PROFILE_NAMES[member.profile_id],
+      avatarUrl: profile?.avatar_path
+        ? `/api/avatar/${member.profile_id}?v=${encodeURIComponent(profile.avatar_path)}`
+        : fallbackAvatar(member.profile_id),
+      state: member.state,
+      epoch: Number(member.epoch) || 0,
+      online: member.state === "joined" && Boolean(member.last_seen) && new Date(member.last_seen as string).getTime() > threshold,
+      lastSeen: member.last_seen,
+      isCreator: member.profile_id === room.created_by,
+    };
+  });
+  const mine = formattedMembers.find((member) => member.id === me);
   return {
-    id: row.id,
-    callerId: row.caller_id,
-    calleeId: row.callee_id,
-    status: row.status,
-    callType: row.call_type === "video" ? "video" : "audio",
-    createdAt: row.created_at,
-    answeredAt: row.answered_at,
-    endedAt: row.ended_at,
-    other: {
-      id: otherId,
-      displayName: PROFILE_NAMES[otherId],
-      avatarUrl: fallbackAvatar(otherId),
-    },
+    id: room.id,
+    callType: room.call_type,
+    status: room.status,
+    createdBy: room.created_by,
+    conversationId: room.conversation_id,
+    createdAt: room.created_at,
+    startedAt: room.started_at,
+    endedAt: room.ended_at,
+    meState: mine?.state || "left",
+    meEpoch: mine?.epoch || 0,
+    members: formattedMembers,
   };
-}
-
-async function readySupabase() {
-  await ensureCallTypeColumn();
-  return getSupabaseAdmin();
 }
 
 export async function GET() {
   const auth = await requireApiSession();
   if (isErrorResponse(auth)) return auth;
-  const supabase = await readySupabase();
-  const { data, error } = await supabase
-    .from("call_sessions")
-    .select("id,caller_id,callee_id,status,call_type,created_at,answered_at,ended_at")
-    .or(`caller_id.eq.${auth.profileId},callee_id.eq.${auth.profileId}`)
-    .in("status", ["ringing", "accepted"])
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  if (!data) return NextResponse.json({ call: null });
-
-  if (data.status === "ringing" && Date.now() - new Date(data.created_at).getTime() > 75_000) {
-    await supabase.from("call_sessions").update({ status: "ended", ended_at: new Date().toISOString() }).eq("id", data.id);
-    return NextResponse.json({ call: null });
+  try {
+    const room = await getActiveRoomFor(auth.profileId);
+    if (!room) return NextResponse.json({ call: null });
+    return NextResponse.json({ call: await formatRoom(room, auth.profileId) });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Appel indisponible" }, { status: 500 });
   }
-
-  return NextResponse.json({ call: formatCall(data, auth.profileId) });
 }
 
 export async function POST(request: Request) {
   const auth = await requireApiSession();
   if (isErrorResponse(auth)) return auth;
   const body = await request.json().catch(() => ({}));
-  const calleeId = body?.calleeId;
   const callType = body?.callType === "video" ? "video" : "audio";
-  if (!isProfileId(calleeId) || calleeId === auth.profileId) {
+  const conversationId = typeof body?.conversationId === "string" ? body.conversationId : null;
+  const calleeId = isProfileId(body?.calleeId) ? body.calleeId : null;
+
+  if (!conversationId && (!calleeId || calleeId === auth.profileId)) {
     return NextResponse.json({ error: "Destinataire invalide" }, { status: 400 });
   }
 
-  const supabase = await readySupabase();
-  const { data: busy } = await supabase
-    .from("call_sessions")
-    .select("id")
-    .or(`caller_id.eq.${auth.profileId},callee_id.eq.${auth.profileId},caller_id.eq.${calleeId},callee_id.eq.${calleeId}`)
-    .in("status", ["ringing", "accepted"])
-    .limit(1);
-
-  if (busy?.length) return NextResponse.json({ error: "L’un de vous est déjà en appel" }, { status: 409 });
-
-  const { data, error } = await supabase.from("call_sessions").insert({
-    caller_id: auth.profileId,
-    callee_id: calleeId,
-    status: "ringing",
-    call_type: callType,
-  }).select("id,caller_id,callee_id,status,call_type,created_at,answered_at,ended_at").single();
-
-  if (error || !data) return NextResponse.json({ error: error?.message || "Impossible de lancer l’appel" }, { status: 500 });
-  void sendCallPush({ callerId: auth.profileId, calleeId, callId: data.id, callType }).catch((e) => console.error("Call push failed", e));
-  return NextResponse.json({ call: formatCall(data, auth.profileId) });
+  try {
+    const { room, invited } = await createRoom({
+      creator: auth.profileId,
+      callType,
+      conversationId,
+      calleeId,
+    });
+    const title = conversationId ? "Appel de groupe" : undefined;
+    void sendCallPush({
+      callerId: auth.profileId,
+      calleeIds: invited,
+      callId: room.id,
+      callType,
+      groupTitle: title,
+    }).catch((e) => console.error("Call push failed", e));
+    return NextResponse.json({ call: await formatRoom(room, auth.profileId) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Impossible de lancer l’appel";
+    const status = /déjà|inaccessible|participant/i.test(message) ? 409 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }
