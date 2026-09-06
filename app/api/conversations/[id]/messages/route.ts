@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireApiSession, isErrorResponse, isConversationMember } from "@/lib/api";
 import { fallbackAvatar, PROFILE_NAMES, isProfileId } from "@/lib/profiles";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { sendMessagePush } from "@/lib/push";
 import type { ProfileId } from "@/types/chat";
 
 export const runtime = "nodejs";
@@ -126,5 +127,8 @@ export async function POST(request: Request, context: Context) {
 
   if (error || !data) return NextResponse.json({ error: error?.message || "Envoi impossible" }, { status: 500 });
   await supabase.from("message_reads").upsert({ message_id: data.id, profile_id: auth.profileId }, { onConflict: "message_id,profile_id" });
+  await sendMessagePush({ conversationId, senderId: auth.profileId, content, mediaName }).catch((pushError) => {
+    console.error("Push notification error:", pushError);
+  });
   return NextResponse.json({ id: data.id });
 }
