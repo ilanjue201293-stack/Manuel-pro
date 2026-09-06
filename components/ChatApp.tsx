@@ -1,19 +1,20 @@
 "use client";
 
 import Image from "next/image";
-import { CSSProperties, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, useCallback, useMemo, useRef, useState, useEffect } from "react";
 import Avatar from "@/components/Avatar";
 import CreateGroupModal from "@/components/CreateGroupModal";
 import SettingsModal from "@/components/SettingsModal";
 import Modal from "@/components/Modal";
 import { apiFetch } from "@/lib/client-api";
 import { getUploadClient } from "@/lib/client-supabase";
-import { PROFILE_NAMES } from "@/lib/profiles";
-import type { ChatMessage, Conversation, PublicProfile, UserSettings } from "@/types/chat";
+import type { ChatMessage, Conversation, MessageAttachment, PublicProfile, UserSettings } from "@/types/chat";
 
 const REACTIONS = ["👍", "❤️", "😂", "😮", "🔥", "💀"];
+const GROUP_WINDOW = 5 * 60 * 1000;
 type MeResponse = { profile: PublicProfile; settings: UserSettings };
 type MediaPayload = { path: string; name: string; type: string };
+type PendingItem = { id: string; file: File; url: string };
 
 function clock(value: string) {
   return new Intl.DateTimeFormat("fr-FR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -25,6 +26,11 @@ function initials(value: string) {
 
 function sameJson(a: unknown, b: unknown) {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function closeInTime(a?: ChatMessage, b?: ChatMessage) {
+  if (!a || !b || a.senderId !== b.senderId) return false;
+  return Math.abs(new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) <= GROUP_WINDOW;
 }
 
 export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
@@ -41,19 +47,19 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
   const [draft, setDraft] = useState("");
   const [reply, setReply] = useState<ChatMessage | null>(null);
   const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const [actionsFor, setActionsFor] = useState<string | null>(null);
   const [reactionFor, setReactionFor] = useState<string | null>(null);
   const [forwarding, setForwarding] = useState<ChatMessage | null>(null);
   const [showGroup, setShowGroup] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [pendingUrl, setPendingUrl] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingItem[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const gifRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
-  const active = useMemo(() => conversations.find((c) => c.id === activeId) || null, [conversations, activeId]);
+  const active = useMemo(() => conversations.find((conversation) => conversation.id === activeId) || null, [conversations, activeId]);
 
   const loadMe = useCallback(async () => {
     const result = await apiFetch<MeResponse>("/api/me");
@@ -89,7 +95,6 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
   }, []);
 
   useEffect(() => {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => undefined);
     void loadPresence();
     void loadConversations();
     const refresh = () => {
@@ -105,19 +110,23 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
     }, 4000);
     document.addEventListener("visibilitychange", refresh);
     return () => {
-      clearInterval(presenceTimer);
-      clearInterval(conversationTimer);
+      window.clearInterval(presenceTimer);
+      window.clearInterval(conversationTimer);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [loadPresence, loadConversations]);
+  }, [loadConversations, loadPresence]);
 
   useEffect(() => {
+    setActionsFor(null);
+    setReactionFor(null);
+    setReply(null);
+    setEditing(null);
     if (!activeId) { setMessages([]); return; }
-    void loadMessages(activeId);
+    void loadMessages(activeId).then(() => window.setTimeout(() => endRef.current?.scrollIntoView({ block: "end" }), 40));
     const timer = window.setInterval(() => {
       if (document.visibilityState === "visible") void loadMessages(activeId);
-    }, 2000);
-    return () => clearInterval(timer);
+    }, 1800);
+    return () => window.clearInterval(timer);
   }, [activeId, loadMessages]);
 
   useEffect(() => {
@@ -139,30 +148,52 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
   }, [conversations]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (!messages.length) return;
+    window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: "end" }));
   }, [messages.length]);
 
-  useEffect(() => {
-    if (!pendingFile) { setPendingUrl(null); return; }
-    const url = URL.createObjectURL(pendingFile);
-    setPendingUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [pendingFile]);
+  useEffect(() => () => {
+    pending.forEach((item) => URL.revokeObjectURL(item.url));
+  }, [pending]);
 
   function clearPending() {
-    setPendingFile(null);
+    setPending((current) => {
+      current.forEach((item) => URL.revokeObjectURL(item.url));
+      return [];
+    });
     if (fileRef.current) fileRef.current.value = "";
     if (gifRef.current) gifRef.current.value = "";
   }
 
-  function selectFile(file?: File) {
-    if (!file) return;
+  function addFiles(files?: FileList | File[]) {
+    if (!files) return;
     setError("");
-    if (file.size > 50 * 1024 * 1024) {
-      setError("Fichier trop gros (max 50 Mo)");
-      return;
-    }
-    setPendingFile(file);
+    const incoming = Array.from(files);
+    setPending((current) => {
+      const room = Math.max(0, 10 - current.length);
+      const accepted: PendingItem[] = [];
+      for (const file of incoming.slice(0, room)) {
+        if (file.size > 50 * 1024 * 1024) {
+          setError(`${file.name} dépasse 50 Mo`);
+          continue;
+        }
+        accepted.push({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          file,
+          url: URL.createObjectURL(file),
+        });
+      }
+      if (incoming.length > room) setError("Maximum 10 médias par message");
+      return [...current, ...accepted];
+    });
+  }
+
+  function removePending(id: string) {
+    setPending((current) => {
+      const target = current.find((item) => item.id === id);
+      if (target) URL.revokeObjectURL(target.url);
+      return current.filter((item) => item.id !== id);
+    });
   }
 
   async function uploadSelected(file: File): Promise<MediaPayload> {
@@ -170,7 +201,12 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
       method: "POST",
       body: JSON.stringify({ fileName: file.name, contentType: file.type || "application/octet-stream", size: file.size, kind: "message" }),
     });
-    const result = await getUploadClient().storage.from("private-media").uploadToSignedUrl(signed.path, signed.token, file, { contentType: file.type || "application/octet-stream" });
+    const result = await getUploadClient().storage.from("private-media").uploadToSignedUrl(
+      signed.path,
+      signed.token,
+      file,
+      { contentType: file.type || "application/octet-stream" },
+    );
     if (result.error) throw result.error;
     return { path: signed.path, name: file.name, type: file.type || "application/octet-stream" };
   }
@@ -179,25 +215,21 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
     event?.preventDefault();
     if (!activeId || sending) return;
     const text = draft.trim();
-    if (!text && !pendingFile) return;
+    if (!text && !pending.length) return;
     setSending(true);
     setError("");
     try {
-      const media = pendingFile ? await uploadSelected(pendingFile) : null;
+      const media: MediaPayload[] = [];
+      for (const item of pending) media.push(await uploadSelected(item.file));
       await apiFetch(`/api/conversations/${activeId}/messages`, {
         method: "POST",
-        body: JSON.stringify({
-          content: text,
-          mediaPath: media?.path || null,
-          mediaName: media?.name || null,
-          mediaType: media?.type || null,
-          replyTo: reply?.id || null,
-        }),
+        body: JSON.stringify({ content: text, media, replyTo: reply?.id || null }),
       });
       setDraft("");
       setReply(null);
       clearPending();
       await Promise.all([loadMessages(activeId), loadConversations()]);
+      window.requestAnimationFrame(() => endRef.current?.scrollIntoView({ block: "end" }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Envoi impossible");
     } finally {
@@ -217,7 +249,8 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
     if (!editing || !activeId) return;
     try {
       await apiFetch(`/api/messages/${editing.id}`, { method: "PATCH", body: JSON.stringify({ content: draft }) });
-      setEditing(null); setDraft("");
+      setEditing(null);
+      setDraft("");
       await loadMessages(activeId);
     } catch (e) { setError(e instanceof Error ? e.message : "Modification impossible"); }
   }
@@ -226,6 +259,7 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
     if (!confirm("Supprimer ce message ?") || !activeId) return;
     try {
       await apiFetch(`/api/messages/${message.id}`, { method: "DELETE" });
+      setActionsFor(null);
       await loadMessages(activeId);
     } catch (e) { setError(e instanceof Error ? e.message : "Suppression impossible"); }
   }
@@ -246,8 +280,8 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
   }
 
   const style = { "--accent": settings.accent, "--font-scale": String(settings.fontScale) } as CSSProperties;
-  const activeOther = active?.type === "dm" ? active.members.find((m) => m.id !== me.id) : null;
-  const activeOtherOnline = activeOther ? profiles.find((p) => p.id === activeOther.id)?.online : false;
+  const activeOther = active?.type === "dm" ? active.members.find((member) => member.id !== me.id) : null;
+  const activeOtherOnline = activeOther ? profiles.find((profile) => profile.id === activeOther.id)?.online : false;
 
   return (
     <main className={`chat-app theme-${settings.theme}`} style={style}>
@@ -261,14 +295,14 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
         </div>
         <div className="conversation-list">
           {conversations.map((conversation) => {
-            const other = conversation.type === "dm" ? conversation.members.find((m) => m.id !== me.id) : null;
-            const online = other ? profiles.find((p) => p.id === other.id)?.online : undefined;
+            const other = conversation.type === "dm" ? conversation.members.find((member) => member.id !== me.id) : null;
+            const online = other ? profiles.find((profile) => profile.id === other.id)?.online : undefined;
             return (
               <button key={conversation.id} className={`conversation-item ${conversation.id === activeId ? "active" : ""}`} onClick={() => setActiveId(conversation.id)}>
                 {other ? <Avatar src={other.avatarUrl} profileId={other.id} name={other.displayName} size={46} online={online} /> : <span className="group-avatar">{initials(conversation.title)}</span>}
                 <span className="conversation-copy">
                   <span className="conversation-line"><strong>{conversation.title}</strong>{conversation.lastMessage && <time>{clock(conversation.lastMessage.createdAt)}</time>}</span>
-                  <span className="conversation-preview">{conversation.lastMessage?.content || (conversation.lastMessage ? "Média" : "Aucun message")}</span>
+                  <span className="conversation-preview">{conversation.lastMessage?.content || (conversation.lastMessage ? "📎 Média" : "Aucun message")}</span>
                 </span>
                 {conversation.unreadCount > 0 && <span className="badge">{conversation.unreadCount}</span>}
               </button>
@@ -279,42 +313,64 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
 
       <section className={`chat-pane ${!activeId ? "mobile-hidden" : ""}`}>
         {!active ? <div className="empty-chat">Choisis une discussion.</div> : <>
-          <header className="chat-head">
+          <header className="chat-head" data-conversation-id={active.id} data-conversation-type={active.type}>
             <button className="back" onClick={() => setActiveId(null)}>‹</button>
             {activeOther ? <Avatar src={activeOther.avatarUrl} profileId={activeOther.id} name={activeOther.displayName} size={40} online={activeOtherOnline} /> : <span className="group-avatar small">{initials(active.title)}</span>}
-            <span className="chat-head-copy"><strong>{active.title}</strong><small>{active.type === "dm" ? (activeOtherOnline ? "En ligne" : "Hors ligne") : `${active.members.length} membres`}</small></span>
+            <span className="chat-head-copy">
+              <strong>{active.title}</strong>
+              <small>{active.type === "dm" ? (activeOtherOnline ? "En ligne" : "Hors ligne") : `${active.members.length} membres`}</small>
+            </span>
           </header>
 
-          <div className="messages">
+          <div className="messages" onClick={(event) => {
+            if (event.target === event.currentTarget) { setActionsFor(null); setReactionFor(null); }
+          }}>
             {messages.length === 0 && <div className="empty-chat">Aucun message pour l’instant.</div>}
-            {messages.map((message) => {
+            {messages.map((message, index) => {
+              const previous = messages[index - 1];
+              const next = messages[index + 1];
+              const groupedPrev = closeInTime(previous, message);
+              const groupedNext = closeInTime(message, next);
               const mine = message.senderId === me.id;
               const readers = message.readBy.filter((id) => id !== me.id);
-              return <article key={message.id} className={`message ${mine ? "mine" : ""}`}>
-                <Avatar src={message.senderAvatarUrl} profileId={message.senderId} name={message.senderName} size={34} />
-                <div className="message-body">
-                  <div className="message-meta"><strong>{message.senderName}</strong><time>{clock(message.createdAt)}</time></div>
-                  <div className={`bubble ${message.deletedAt ? "deleted" : ""}`}>
-                    {message.deletedAt ? <em>Message supprimé</em> : <>
-                      {message.forwarded && <small className="forwarded">↗ Transféré</small>}
-                      {message.replyTo && <div className="reply-box"><strong>{message.replyTo.senderName}</strong><span>{message.replyTo.content || "Média"}</span></div>}
-                      {message.content && <div className="message-text">{message.content}</div>}
-                      {message.mediaUrl && <Media message={message} />}
-                      {message.editedAt && <small className="edited">modifié</small>}
-                    </>}
+              const showSeen = mine && readers.length > 0 && !groupedNext;
+              const openActions = actionsFor === message.id;
+              const attachments = message.attachments?.length
+                ? message.attachments
+                : message.mediaUrl ? [{ id: `legacy-${message.id}`, url: message.mediaUrl, name: message.mediaName || "Fichier", type: message.mediaType || "application/octet-stream" }] : [];
+
+              return (
+                <article key={message.id} className={`message message-v3 ${mine ? "mine" : ""} ${groupedPrev ? "grouped-prev" : "group-start"} ${groupedNext ? "grouped-next" : "group-end"}`}>
+                  <div className="message-avatar-col-v3">
+                    {!groupedPrev && <Avatar src={message.senderAvatarUrl} profileId={message.senderId} name={message.senderName} size={34} />}
                   </div>
-                  {!message.deletedAt && <div className="message-actions">
-                    <button onClick={() => { setReply(message); setEditing(null); }}>↩</button>
-                    <button onClick={() => setReactionFor(reactionFor === message.id ? null : message.id)}>☺</button>
-                    <button onClick={() => setForwarding(message)}>↗</button>
-                    {mine && <button onClick={() => { setEditing(message); setReply(null); setDraft(message.content); clearPending(); }}>✎</button>}
-                    {mine && <button onClick={() => remove(message)}>⌫</button>}
-                  </div>}
-                  {reactionFor === message.id && <div className="reaction-picker">{REACTIONS.map((emoji) => <button key={emoji} onClick={() => react(message.id, emoji)}>{emoji}</button>)}</div>}
-                  {message.reactions.length > 0 && <div className="reaction-row">{message.reactions.map((r) => <button key={r.emoji} className={r.profileIds.includes(me.id) ? "selected" : ""} onClick={() => react(message.id, r.emoji)}>{r.emoji} {r.profileIds.length}</button>)}</div>}
-                  {mine && readers.length > 0 && <div className="seen">Vu par {readers.map((id) => PROFILE_NAMES[id]).join(", ")}</div>}
-                </div>
-              </article>;
+                  <div className="message-body">
+                    {!groupedPrev && <div className="message-meta"><strong>{message.senderName}</strong><time>{clock(message.createdAt)}</time></div>}
+                    <div className="message-line-v3">
+                      <div className={`bubble ${message.deletedAt ? "deleted" : ""}`} onDoubleClick={() => !message.deletedAt && setReactionFor(message.id)}>
+                        {message.deletedAt ? <em>Message supprimé</em> : <>
+                          {message.forwarded && <small className="forwarded">↗ Transféré</small>}
+                          {message.replyTo && <div className="reply-box"><strong>{message.replyTo.senderName}</strong><span>{message.replyTo.content || "Média"}</span></div>}
+                          {message.content && <div className="message-text">{message.content}</div>}
+                          {attachments.length > 0 && <AttachmentGrid attachments={attachments} />}
+                          {message.editedAt && <small className="edited">modifié</small>}
+                        </>}
+                      </div>
+                      {showSeen && <span className="seen-inline-v3">Vu</span>}
+                      {!message.deletedAt && <button className="message-more-v3" aria-label="Actions" onClick={() => { setActionsFor(openActions ? null : message.id); setReactionFor(null); }}>•••</button>}
+                      {openActions && <div className="message-actions-v3">
+                        <button onClick={() => { setReply(message); setEditing(null); setActionsFor(null); }}>↩ <span>Répondre</span></button>
+                        <button onClick={() => setReactionFor(reactionFor === message.id ? null : message.id)}>☺ <span>Réagir</span></button>
+                        <button onClick={() => { setForwarding(message); setActionsFor(null); }}>↗ <span>Transférer</span></button>
+                        {mine && <button onClick={() => { setEditing(message); setReply(null); setDraft(message.content); clearPending(); setActionsFor(null); }}>✎ <span>Modifier</span></button>}
+                        {mine && <button className="danger" onClick={() => void remove(message)}>⌫ <span>Supprimer</span></button>}
+                      </div>}
+                    </div>
+                    {reactionFor === message.id && <div className="reaction-picker v3">{REACTIONS.map((emoji) => <button key={emoji} onClick={() => void react(message.id, emoji)}>{emoji}</button>)}</div>}
+                    {message.reactions.length > 0 && <div className="reaction-row compact-v3">{message.reactions.map((reaction) => <button key={reaction.emoji} className={reaction.profileIds.includes(me.id) ? "selected" : ""} onClick={() => void react(message.id, reaction.emoji)}>{reaction.emoji} {reaction.profileIds.length}</button>)}</div>}
+                  </div>
+                </article>
+              );
             })}
             <div ref={endRef} />
           </div>
@@ -322,13 +378,13 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
           <div className="composer-wrap">
             {error && <button className="error-bar" onClick={() => setError("")}>{error} ×</button>}
             {(reply || editing) && <div className="composer-context"><span><strong>{editing ? "Modification" : `Réponse à ${reply?.senderName}`}</strong><small>{editing?.content || reply?.content || "Média"}</small></span><button onClick={() => { setReply(null); setEditing(null); setDraft(""); }}>×</button></div>}
-            {pendingFile && !editing && <PendingMedia file={pendingFile} url={pendingUrl} onRemove={clearPending} />}
-            <form className="composer" onSubmit={editing ? (e) => { e.preventDefault(); saveEdit(); } : send}>
+            {pending.length > 0 && !editing && <PendingGrid items={pending} onRemove={removePending} />}
+            <form className="composer" onSubmit={editing ? (event) => { event.preventDefault(); void saveEdit(); } : send}>
               <button type="button" onClick={() => fileRef.current?.click()} disabled={sending || Boolean(editing)}>＋</button>
-              <input hidden ref={fileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.txt,.zip,.doc,.docx" onChange={(e) => selectFile(e.target.files?.[0])} />
+              <input data-media-input="true" hidden multiple ref={fileRef} type="file" accept="image/*,video/*,audio/*,.pdf,.txt,.zip,.doc,.docx" onChange={(event) => { addFiles(event.target.files || undefined); event.target.value = ""; }} />
               <button type="button" className="gif" onClick={() => gifRef.current?.click()} disabled={sending || Boolean(editing)}>GIF</button>
-              <input hidden ref={gifRef} type="file" accept="image/gif" onChange={(e) => selectFile(e.target.files?.[0])} />
-              <textarea rows={1} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={sending ? "Envoi…" : pendingFile ? "Ajouter un message…" : "Écrire un message"} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); editing ? void saveEdit() : void send(); } }} />
+              <input hidden multiple ref={gifRef} type="file" accept="image/gif" onChange={(event) => { addFiles(event.target.files || undefined); event.target.value = ""; }} />
+              <textarea rows={1} value={draft} onFocus={() => window.setTimeout(() => endRef.current?.scrollIntoView({ block: "end" }), 80)} onChange={(event) => setDraft(event.target.value)} placeholder={sending ? "Envoi…" : pending.length ? "Ajouter un message…" : "Écrire un message"} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); editing ? void saveEdit() : void send(); } }} />
               <button className="send" type="submit" disabled={sending}>{sending ? "…" : "➤"}</button>
             </form>
           </div>
@@ -337,28 +393,32 @@ export default function ChatApp({ initialMe, initialSettings, onLoggedOut }: {
 
       {showGroup && <CreateGroupModal me={me.id} profiles={profiles} onClose={() => setShowGroup(false)} onCreated={async (id) => { setShowGroup(false); await loadConversations(); setActiveId(id); }} />}
       {showSettings && <SettingsModal me={me} settings={settings} profiles={profiles} onClose={() => setShowSettings(false)} onSettings={setSettings} onAvatarChanged={async () => { await Promise.all([loadMe(), loadPresence(), loadConversations()]); }} onLogout={logout} />}
-      {forwarding && <Modal onClose={() => setForwarding(null)}><div className="modal-title-row"><h2>Transférer vers</h2><button className="icon-button" onClick={() => setForwarding(null)}>×</button></div><div className="forward-list">{conversations.map((c) => <button key={c.id} onClick={() => forward(c.id)}><span>{c.title}</span></button>)}</div></Modal>}
+      {forwarding && <Modal onClose={() => setForwarding(null)}><div className="modal-title-row"><h2>Transférer vers</h2><button className="icon-button" onClick={() => setForwarding(null)}>×</button></div><div className="forward-list">{conversations.map((conversation) => <button key={conversation.id} onClick={() => void forward(conversation.id)}><span>{conversation.title}</span></button>)}</div></Modal>}
     </main>
   );
 }
 
-function PendingMedia({ file, url, onRemove }: { file: File; url: string | null; onRemove: () => void }) {
-  return <div className="pending-media">
-    <div className="pending-thumb">
-      {url && file.type.startsWith("image/") ? <img src={url} alt="Aperçu" /> : null}
-      {url && file.type.startsWith("video/") ? <video src={url} muted playsInline /> : null}
-      {!file.type.startsWith("image/") && !file.type.startsWith("video/") ? <span>📎</span> : null}
-    </div>
-    <span className="pending-copy"><strong>{file.name}</strong><small>{Math.max(0.1, file.size / 1024 / 1024).toFixed(1)} Mo • sera envoyé avec ton message</small></span>
-    <button type="button" onClick={onRemove} aria-label="Retirer le média">×</button>
+function PendingGrid({ items, onRemove }: { items: PendingItem[]; onRemove: (id: string) => void }) {
+  return <div className={`pending-grid-v3 count-${Math.min(items.length, 4)}`}>
+    {items.map((item) => <div key={item.id} className="pending-card-v3">
+      {item.file.type.startsWith("image/") ? <img src={item.url} alt="Aperçu" /> : item.file.type.startsWith("video/") ? <video src={item.url} muted playsInline /> : <div className="pending-file-icon-v3">{item.file.type.startsWith("audio/") ? "🎙" : "📎"}</div>}
+      <span>{item.file.name}</span>
+      <button type="button" onClick={() => onRemove(item.id)} aria-label="Retirer">×</button>
+    </div>)}
   </div>;
 }
 
-function Media({ message }: { message: ChatMessage }) {
-  const url = message.mediaUrl!;
-  const type = message.mediaType || "";
-  if (type.startsWith("image/")) return <a href={url} target="_blank" rel="noreferrer"><Image className="message-image" src={url} alt={message.mediaName || "Image"} width={640} height={480} unoptimized /></a>;
-  if (type.startsWith("video/")) return <video className="message-video" controls playsInline src={url} />;
-  if (type.startsWith("audio/")) return <audio controls src={url} />;
-  return <a className="file-card" href={`${url}?download=1`} target="_blank" rel="noreferrer"><span>↧</span><strong>{message.mediaName || "Fichier"}</strong></a>;
+function AttachmentGrid({ attachments }: { attachments: MessageAttachment[] }) {
+  const visual = attachments.filter((attachment) => attachment.type.startsWith("image/") || attachment.type.startsWith("video/"));
+  const others = attachments.filter((attachment) => !attachment.type.startsWith("image/") && !attachment.type.startsWith("video/"));
+  return <>
+    {visual.length > 0 && <div className={`attachment-grid-v3 count-${Math.min(visual.length, 4)}`}>
+      {visual.map((attachment) => attachment.type.startsWith("image/")
+        ? <a key={attachment.id} href={attachment.url} target="_blank" rel="noreferrer" className="attachment-visual-v3"><Image src={attachment.url} alt={attachment.name} width={700} height={560} unoptimized /></a>
+        : <div key={attachment.id} className="attachment-visual-v3"><video controls playsInline src={attachment.url} /></div>)}
+    </div>}
+    {others.map((attachment) => attachment.type.startsWith("audio/")
+      ? <audio key={attachment.id} controls src={attachment.url} />
+      : <a key={attachment.id} className="file-card" href={`${attachment.url}?download=1`} target="_blank" rel="noreferrer"><span>↧</span><strong>{attachment.name}</strong></a>)}
+  </>;
 }
