@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import Avatar from "@/components/Avatar";
 import Modal from "@/components/Modal";
+import NotificationSettings from "@/components/NotificationSettings";
 import { apiFetch } from "@/lib/client-api";
 import { getUploadClient } from "@/lib/client-supabase";
 import type { PublicProfile, UserSettings } from "@/types/chat";
@@ -120,6 +121,8 @@ export default function SettingsModal({
           <button className={settings.theme === "light" ? "active" : ""} onClick={() => patch({ theme: "light" })}>Clair</button>
         </div>
       </section>
+
+      <NotificationSettings />
 
       <section className="settings-section">
         <div className="settings-label">Connectés</div>
