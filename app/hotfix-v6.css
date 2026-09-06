@@ -1,0 +1,73 @@
+/* Manuel Pro v6 — actions menu + simple video icon */
+
+/* The per-message popup used to be painted inside content-visibility containment on iPad,
+   so React opened it but WebKit clipped it and it looked like the button did nothing. */
+.message-v3{
+  content-visibility:visible!important;
+  contain:none!important;
+  overflow:visible!important;
+}
+.message-v3 .message-body,
+.message-line-v3{
+  overflow:visible!important;
+}
+.message-more-v3{
+  position:relative!important;
+  z-index:20!important;
+  pointer-events:auto!important;
+  cursor:pointer;
+}
+.message-actions-v3{
+  z-index:520!important;
+  visibility:visible!important;
+  opacity:1!important;
+  pointer-events:auto!important;
+}
+
+/* On touch devices, open the actions as an obvious sheet above the composer. */
+@media (pointer:coarse){
+  .message-actions-v3{
+    position:fixed!important;
+    left:50%!important;
+    right:auto!important;
+    top:auto!important;
+    bottom:calc(84px + env(safe-area-inset-bottom))!important;
+    transform:translateX(-50%)!important;
+    width:min(540px,calc(100vw - 24px))!important;
+    display:flex!important;
+    justify-content:space-around!important;
+    gap:5px!important;
+    padding:8px!important;
+    border-radius:17px!important;
+    box-shadow:0 18px 60px rgba(0,0,0,.48)!important;
+  }
+  .message-actions-v3 button{
+    min-height:44px!important;
+    flex:1 1 0!important;
+    justify-content:center!important;
+  }
+  .message-actions-v3 button span{
+    display:inline!important;
+  }
+}
+
+/* User requested the literal camera emoji instead of the drawn camera glyph. */
+.header-call-button.video{
+  font-size:0!important;
+}
+.header-call-button.video::before{
+  content:"📹"!important;
+  display:block!important;
+  width:auto!important;
+  height:auto!important;
+  border:0!important;
+  border-radius:0!important;
+  box-sizing:content-box!important;
+  font-size:19px!important;
+  line-height:1!important;
+  transform:none!important;
+}
+.header-call-button.video::after{
+  content:none!important;
+  display:none!important;
+}
