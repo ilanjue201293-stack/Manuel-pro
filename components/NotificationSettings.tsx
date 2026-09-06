@@ -20,16 +20,22 @@ function urlBase64ToArrayBuffer(value: string): ArrayBuffer {
   return Uint8Array.from([...raw].map((char) => char.charCodeAt(0))).buffer;
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export default function NotificationSettings() {
   const [state, setState] = useState<PushState>("checking");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function registration() {
-    return navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    return navigator.serviceWorker.ready;
   }
 
   async function refresh() {
+    setError("");
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
       setState("unsupported");
       return;
@@ -46,8 +52,9 @@ export default function NotificationSettings() {
       const reg = await registration();
       const subscription = await reg.pushManager.getSubscription();
       setState(subscription ? "on" : "off");
-    } catch {
-      setState("unsupported");
+    } catch (e) {
+      setState("off");
+      setError(e instanceof Error ? e.message : "Impossible de vérifier les notifications");
     }
   }
 
@@ -57,11 +64,26 @@ export default function NotificationSettings() {
     setBusy(true);
     setError("");
     try {
-      const permission = await Notification.requestPermission();
+      let permission = Notification.permission;
       if (permission !== "granted") {
-        setState(permission === "denied" ? "blocked" : "off");
+        permission = await Notification.requestPermission();
+        await wait(350);
+        if (Notification.permission === "granted") permission = "granted";
+      }
+
+      if (permission !== "granted") {
+        if (Notification.permission === "denied" || permission === "denied") {
+          setState("blocked");
+          setError(isIosDevice()
+            ? "iPadOS/iOS n’a pas laissé l’autorisation active. Sur un appareil scolaire, un profil de gestion peut bloquer les notifications même après avoir appuyé sur Autoriser."
+            : "Les notifications sont bloquées dans les réglages du navigateur.");
+        } else {
+          setState("off");
+          setError("L’autorisation n’a pas encore été accordée.");
+        }
         return;
       }
+
       const reg = await registration();
       let subscription = await reg.pushManager.getSubscription();
       if (!subscription) {
@@ -77,8 +99,16 @@ export default function NotificationSettings() {
       });
       setState("on");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Impossible d’activer les notifications");
-      await refresh();
+      const message = e instanceof Error ? e.message : "Impossible d’activer les notifications";
+      if (Notification.permission === "denied") {
+        setState("blocked");
+        setError(isIosDevice()
+          ? "iPadOS indique finalement que les notifications sont bloquées. Sur un iPad scolaire, cela peut venir du profil MDM de l’école."
+          : message);
+      } else {
+        setState("off");
+        setError(message);
+      }
     } finally {
       setBusy(false);
     }
@@ -111,14 +141,15 @@ export default function NotificationSettings() {
         <div className="settings-label">Notifications</div>
         {state === "checking" && <div className="settings-hint">Vérification…</div>}
         {state === "on" && <div className="settings-hint good">Activées sur cet appareil</div>}
-        {state === "off" && <div className="settings-hint">Recevoir les nouveaux messages même quand le site est fermé</div>}
-        {state === "install" && <div className="settings-hint">Sur iPhone/iPad : ouvre le site depuis l’écran d’accueil pour pouvoir activer les notifications.</div>}
-        {state === "blocked" && <div className="settings-hint">Notifications bloquées dans les réglages de l’appareil.</div>}
+        {state === "off" && <div className="settings-hint">Recevoir les nouveaux messages quand Manuel Pro est fermé ou en arrière-plan</div>}
+        {state === "install" && <div className="settings-hint">Sur iPhone/iPad : ouvre Manuel Pro depuis l’écran d’accueil pour pouvoir activer les notifications.</div>}
+        {state === "blocked" && <div className="settings-hint">iOS/iPadOS indique que les notifications ne sont pas autorisées sur cet appareil.</div>}
         {state === "unsupported" && <div className="settings-hint">Les notifications push sont bloquées ou non prises en charge sur cet appareil.</div>}
         {error && <div className="form-error compact">{error}</div>}
       </div>
       {state === "on" && <button className="button ghost" disabled={busy} onClick={disable}>{busy ? "…" : "Désactiver"}</button>}
       {state === "off" && <button className="button primary" disabled={busy} onClick={enable}>{busy ? "…" : "Activer"}</button>}
+      {state === "blocked" && <button className="button ghost" disabled={busy} onClick={() => void refresh()}>{busy ? "…" : "Revérifier"}</button>}
     </section>
   );
 }
