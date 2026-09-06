@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import ChatApp from "@/components/ChatApp";
 import LoginScreen from "@/components/LoginScreen";
+import InAppNotifier from "@/components/InAppNotifier";
 import { apiFetch } from "@/lib/client-api";
 import type { PublicProfile, UserSettings } from "@/types/chat";
 
@@ -27,5 +28,8 @@ export default function RootApp() {
 
   if (state === "loading") return <main className="loading-page"><span className="loading-dot" /></main>;
   if (state === "login" || !me) return <LoginScreen onLoggedIn={check} />;
-  return <ChatApp initialMe={me.profile} initialSettings={me.settings} onLoggedOut={() => { setMe(null); setState("login"); }} />;
+  return <>
+    <ChatApp initialMe={me.profile} initialSettings={me.settings} onLoggedOut={() => { setMe(null); setState("login"); }} />
+    <InAppNotifier />
+  </>;
 }
