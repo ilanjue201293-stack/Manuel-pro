@@ -26,6 +26,13 @@ export type MessagePreview = {
   deleted: boolean;
 };
 
+export type MessageAttachment = {
+  id: string;
+  url: string;
+  name: string;
+  type: string;
+};
+
 export type ChatMessage = {
   id: string;
   conversationId: string;
@@ -36,6 +43,7 @@ export type ChatMessage = {
   mediaUrl: string | null;
   mediaName: string | null;
   mediaType: string | null;
+  attachments: MessageAttachment[];
   replyTo: MessagePreview | null;
   forwarded: boolean;
   createdAt: string;
