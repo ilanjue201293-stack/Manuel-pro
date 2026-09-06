@@ -4,6 +4,7 @@ import "./globals.css";
 import "./enhancements.css";
 import "./mobile-keyboard.css";
 import "./comms-v2.css";
+import "./chat-v4.css";
 
 export const metadata: Metadata = {
   title: "Manuel Pro",
