@@ -111,16 +111,21 @@ export async function sendCallPush({
   callerId,
   calleeId,
   callId,
+  callType = "audio",
 }: {
   callerId: ProfileId;
   calleeId: ProfileId;
   callId: string;
+  callType?: "audio" | "video";
 }) {
+  const video = callType === "video";
   await sendToProfiles([calleeId], {
     kind: "call",
-    title: `Appel de ${PROFILE_NAMES[callerId]}`,
-    body: "📞 Appel audio entrant",
+    callType,
+    title: `${video ? "📹" : "📞"} ${PROFILE_NAMES[callerId]} vous appelle`,
+    body: video ? "Appel vidéo entrant • Touchez pour répondre" : "Appel audio entrant • Touchez pour répondre",
     callId,
+    callerId,
     url: `/?call=${encodeURIComponent(callId)}`,
-  }, { ttl: 60, urgency: "high" });
+  }, { ttl: 75, urgency: "high" });
 }
