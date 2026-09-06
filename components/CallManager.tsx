@@ -16,7 +16,7 @@ type CallInfo = {
   endedAt: string | null;
   other: PublicProfile;
 };
-type SignalRow = { id: number; sender_id: ProfileId; kind: "offer" | "answer" | "ice"; payload: any };
+type SignalRow = { id: number | string; sender_id: ProfileId; kind: "offer" | "answer" | "ice"; payload: any };
 type Phase = "idle" | "incoming" | "calling" | "connecting" | "connected";
 
 const ICE_SERVERS: RTCIceServer[] = [
@@ -43,32 +43,40 @@ export default function CallManager({ me }: { me: PublicProfile }) {
   const queuedIceRef = useRef<RTCIceCandidateInit[]>([]);
   const processingRef = useRef(false);
   const connectedAtRef = useRef<number | null>(null);
-  const endingRef = useRef(false);
+  const shuttingDownRef = useRef(false);
 
   useEffect(() => { callRef.current = call; }, [call]);
 
-  const stopMedia = useCallback(() => {
-    pcRef.current?.close();
+  const closePeer = useCallback(() => {
+    shuttingDownRef.current = true;
+    const pc = pcRef.current;
     pcRef.current = null;
+    if (pc) {
+      pc.onconnectionstatechange = null;
+      pc.onicecandidate = null;
+      pc.ontrack = null;
+      pc.close();
+    }
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
-    queuedSignalsRef.current = [];
-    queuedIceRef.current = [];
-    cursorRef.current = 0;
-    processingRef.current = false;
-    connectedAtRef.current = null;
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
   }, []);
 
-  const reset = useCallback((message = "") => {
-    stopMedia();
+  const clearCall = useCallback((message = "") => {
+    closePeer();
+    callRef.current = null;
     setCall(null);
     setPhase("idle");
     setMuted(false);
     setElapsed(0);
     setError(message);
-    endingRef.current = false;
-  }, [stopMedia]);
+    cursorRef.current = 0;
+    queuedSignalsRef.current = [];
+    queuedIceRef.current = [];
+    processingRef.current = false;
+    connectedAtRef.current = null;
+    window.setTimeout(() => { shuttingDownRef.current = false; }, 0);
+  }, [closePeer]);
 
   const sendSignal = useCallback(async (callId: string, kind: "offer" | "answer" | "ice", payload: object) => {
     await apiFetch(`/api/calls/${callId}/signal`, {
@@ -80,13 +88,12 @@ export default function CallManager({ me }: { me: PublicProfile }) {
   const flushIce = useCallback(async () => {
     const pc = pcRef.current;
     if (!pc?.remoteDescription) return;
-    const candidates = queuedIceRef.current.splice(0);
-    for (const candidate of candidates) {
+    for (const candidate of queuedIceRef.current.splice(0)) {
       try { await pc.addIceCandidate(candidate); } catch {}
     }
   }, []);
 
-  const processQueuedSignals = useCallback(async () => {
+  const processSignals = useCallback(async () => {
     if (processingRef.current || !pcRef.current || !callRef.current) return;
     processingRef.current = true;
     try {
@@ -99,9 +106,7 @@ export default function CallManager({ me }: { me: PublicProfile }) {
           const candidate = signal.payload as RTCIceCandidateInit;
           if (pc.remoteDescription) {
             try { await pc.addIceCandidate(candidate); } catch {}
-          } else {
-            queuedIceRef.current.push(candidate);
-          }
+          } else queuedIceRef.current.push(candidate);
           continue;
         }
 
@@ -110,7 +115,7 @@ export default function CallManager({ me }: { me: PublicProfile }) {
           await flushIce();
           const answer = await pc.createAnswer();
           await pc.setLocalDescription(answer);
-          await sendSignal(current.id, "answer", answer.toJSON());
+          await sendSignal(current.id, "answer", answer);
           continue;
         }
 
@@ -126,13 +131,19 @@ export default function CallManager({ me }: { me: PublicProfile }) {
     }
   }, [flushIce, me.id, sendSignal]);
 
-  const createPeer = useCallback(async (current: CallInfo, stream: MediaStream) => {
-    stopMedia();
+  const makePeer = useCallback(async (current: CallInfo, stream: MediaStream) => {
+    const previous = pcRef.current;
+    if (previous) {
+      previous.onconnectionstatechange = null;
+      previous.close();
+    }
+    streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = stream;
+    shuttingDownRef.current = false;
+
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
     pcRef.current = pc;
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-
     pc.onicecandidate = (event) => {
       if (event.candidate) void sendSignal(current.id, "ice", event.candidate.toJSON()).catch(() => undefined);
     };
@@ -147,16 +158,16 @@ export default function CallManager({ me }: { me: PublicProfile }) {
       if (pc.connectionState === "connected") {
         connectedAtRef.current = Date.now();
         setPhase("connected");
-      } else if (["failed", "closed"].includes(pc.connectionState) && callRef.current && !endingRef.current) {
+      } else if (["failed", "closed"].includes(pc.connectionState) && !shuttingDownRef.current && callRef.current) {
         void apiFetch(`/api/calls/${current.id}`, { method: "PATCH", body: JSON.stringify({ action: "end" }) }).catch(() => undefined);
-        reset("Appel terminé");
+        clearCall("Appel terminé");
       }
     };
-    await processQueuedSignals();
+    await processSignals();
     return pc;
-  }, [processQueuedSignals, reset, sendSignal, stopMedia]);
+  }, [clearCall, processSignals, sendSignal]);
 
-  const microphone = useCallback(async () => {
+  const getMic = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error("Microphone non disponible sur cet appareil");
     return navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -167,29 +178,30 @@ export default function CallManager({ me }: { me: PublicProfile }) {
   const startOutgoing = useCallback(async (calleeId: ProfileId) => {
     if (callRef.current || phase !== "idle") return;
     setError("");
+    let stream: MediaStream | null = null;
     try {
-      const stream = await microphone();
+      stream = await getMic();
       const result = await apiFetch<{ call: CallInfo }>("/api/calls", {
         method: "POST",
         body: JSON.stringify({ calleeId }),
       });
-      setCall(result.call);
       callRef.current = result.call;
+      setCall(result.call);
       setPhase("calling");
-      const pc = await createPeer(result.call, stream);
+      const pc = await makePeer(result.call, stream);
       const offer = await pc.createOffer({ offerToReceiveAudio: true });
       await pc.setLocalDescription(offer);
-      await sendSignal(result.call.id, "offer", offer.toJSON());
+      await sendSignal(result.call.id, "offer", offer);
     } catch (e) {
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      reset(e instanceof Error ? e.message : "Impossible de lancer l’appel");
+      stream?.getTracks().forEach((track) => track.stop());
+      clearCall(e instanceof Error ? e.message : "Impossible de lancer l’appel");
     }
-  }, [createPeer, microphone, phase, reset, sendSignal]);
+  }, [clearCall, getMic, makePeer, phase, sendSignal]);
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent<{ calleeId?: ProfileId }>).detail;
-      if (detail?.calleeId) void startOutgoing(detail.calleeId);
+      const id = (event as CustomEvent<{ calleeId?: ProfileId }>).detail?.calleeId;
+      if (id) void startOutgoing(id);
     };
     window.addEventListener("MANUEL_PRO_START_CALL", handler);
     return () => window.removeEventListener("MANUEL_PRO_START_CALL", handler);
@@ -206,13 +218,13 @@ export default function CallManager({ me }: { me: PublicProfile }) {
           await apiFetch(`/api/calls/${result.call.id}`, { method: "PATCH", body: JSON.stringify({ action: "end" }) }).catch(() => undefined);
           return;
         }
-        setCall(result.call);
         callRef.current = result.call;
+        setCall(result.call);
         setPhase(result.call.calleeId === me.id ? "incoming" : "calling");
       } catch {}
     };
     void check();
-    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void check(); }, 1200);
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void check(); }, 1100);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [call, me.id]);
 
@@ -226,17 +238,17 @@ export default function CallManager({ me }: { me: PublicProfile }) {
         if (result.signals?.length) {
           cursorRef.current = Math.max(cursorRef.current, ...result.signals.map((signal) => Number(signal.id) || 0));
           queuedSignalsRef.current.push(...result.signals);
-          void processQueuedSignals();
+          void processSignals();
         }
         if (result.call.status === "accepted" && phase === "calling") setPhase("connecting");
-        if (result.call.status === "rejected") return reset("Appel refusé");
-        if (result.call.status === "ended") return reset("Appel terminé");
+        if (result.call.status === "rejected") clearCall("Appel refusé");
+        if (result.call.status === "ended") clearCall("Appel terminé");
       } catch {}
     };
     void poll();
     const timer = window.setInterval(poll, 650);
     return () => { stopped = true; window.clearInterval(timer); };
-  }, [call, phase, processQueuedSignals, reset]);
+  }, [call, clearCall, phase, processSignals]);
 
   useEffect(() => {
     if (phase !== "connected") return;
@@ -248,40 +260,43 @@ export default function CallManager({ me }: { me: PublicProfile }) {
 
   useEffect(() => () => {
     const current = callRef.current;
+    shuttingDownRef.current = true;
     if (current) void apiFetch(`/api/calls/${current.id}`, { method: "PATCH", body: JSON.stringify({ action: "end" }) }).catch(() => undefined);
-    stopMedia();
-  }, [stopMedia]);
+    closePeer();
+  }, [closePeer]);
 
   async function accept() {
     const current = callRef.current;
     if (!current || phase !== "incoming") return;
     setError("");
+    let stream: MediaStream | null = null;
     try {
-      const stream = await microphone();
+      stream = await getMic();
       setPhase("connecting");
-      await createPeer(current, stream);
+      await makePeer(current, stream);
       await apiFetch(`/api/calls/${current.id}`, { method: "PATCH", body: JSON.stringify({ action: "accept" }) });
-      await processQueuedSignals();
+      await processSignals();
     } catch (e) {
+      stream?.getTracks().forEach((track) => track.stop());
       await apiFetch(`/api/calls/${current.id}`, { method: "PATCH", body: JSON.stringify({ action: "reject" }) }).catch(() => undefined);
-      reset(e instanceof Error ? e.message : "Impossible d’accepter l’appel");
+      clearCall(e instanceof Error ? e.message : "Impossible d’accepter l’appel");
     }
   }
 
   async function decline() {
     const current = callRef.current;
     if (!current) return;
-    endingRef.current = true;
+    shuttingDownRef.current = true;
     await apiFetch(`/api/calls/${current.id}`, { method: "PATCH", body: JSON.stringify({ action: "reject" }) }).catch(() => undefined);
-    reset();
+    clearCall();
   }
 
   async function hangup() {
     const current = callRef.current;
     if (!current) return;
-    endingRef.current = true;
+    shuttingDownRef.current = true;
     await apiFetch(`/api/calls/${current.id}`, { method: "PATCH", body: JSON.stringify({ action: "end" }) }).catch(() => undefined);
-    reset();
+    clearCall();
   }
 
   function toggleMute() {
@@ -291,15 +306,8 @@ export default function CallManager({ me }: { me: PublicProfile }) {
   }
 
   if (!call || phase === "idle") return <audio ref={remoteAudioRef} autoPlay playsInline hidden />;
-
   const incoming = phase === "incoming";
-  const subtitle = incoming
-    ? "Appel audio entrant"
-    : phase === "calling"
-      ? "Sonnerie…"
-      : phase === "connecting"
-        ? "Connexion…"
-        : formatTime(elapsed);
+  const subtitle = incoming ? "Appel audio entrant" : phase === "calling" ? "Sonnerie…" : phase === "connecting" ? "Connexion…" : formatTime(elapsed);
 
   return <>
     <audio ref={remoteAudioRef} autoPlay playsInline hidden />
