@@ -45,12 +45,13 @@ export function getPublicVapidKey() {
 
 async function sendToProfiles(profileIds: string[], payload: Record<string, unknown>, options?: { ttl?: number; urgency?: "very-low" | "low" | "normal" | "high" }) {
   configureVapid();
-  if (!profileIds.length) return;
+  const unique = Array.from(new Set(profileIds)).filter(Boolean);
+  if (!unique.length) return;
   const supabase = getSupabaseAdmin();
   const { data: subscriptions } = await supabase
     .from("push_subscriptions")
     .select("endpoint,profile_id,p256dh,auth")
-    .in("profile_id", profileIds);
+    .in("profile_id", unique);
   if (!subscriptions?.length) return;
 
   await Promise.allSettled(subscriptions.map(async (row: any) => {
@@ -109,23 +110,33 @@ export async function sendMessagePush({
 
 export async function sendCallPush({
   callerId,
-  calleeId,
+  calleeIds,
   callId,
   callType = "audio",
+  groupTitle,
 }: {
   callerId: ProfileId;
-  calleeId: ProfileId;
+  calleeIds: ProfileId[];
   callId: string;
   callType?: "audio" | "video";
+  groupTitle?: string;
 }) {
   const video = callType === "video";
-  await sendToProfiles([calleeId], {
+  const caller = PROFILE_NAMES[callerId];
+  const title = groupTitle
+    ? `${video ? "📹" : "📞"} ${groupTitle}`
+    : `${video ? "📹" : "📞"} ${caller} vous appelle`;
+  const body = groupTitle
+    ? `${caller} vous invite • ${video ? "appel vidéo" : "appel audio"} • Touchez pour rejoindre`
+    : `${video ? "Appel vidéo" : "Appel audio"} entrant • Touchez pour répondre`;
+
+  await sendToProfiles(calleeIds, {
     kind: "call",
     callType,
-    title: `${video ? "📹" : "📞"} ${PROFILE_NAMES[callerId]} vous appelle`,
-    body: video ? "Appel vidéo entrant • Touchez pour répondre" : "Appel audio entrant • Touchez pour répondre",
+    title,
+    body,
     callId,
     callerId,
     url: `/?call=${encodeURIComponent(callId)}`,
-  }, { ttl: 75, urgency: "high" });
+  }, { ttl: 120, urgency: "high" });
 }
