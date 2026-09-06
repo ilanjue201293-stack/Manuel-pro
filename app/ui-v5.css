@@ -36,6 +36,7 @@
 .header-call-button.video::after{content:"";position:absolute;width:7px;height:8px;right:6px;border:2px solid currentColor;border-left:0;border-radius:0 3px 3px 0;transform:skewY(-15deg)}
 
 /* --- Minimized call pill --- */
+.call-minimize-host-v5{display:contents}
 .call-overlay.call-minimized-v5{opacity:0!important;pointer-events:none!important;transition:opacity .16s ease!important}
 .call-mini-v5{position:fixed;z-index:290;top:calc(10px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:min(430px,calc(100vw - 20px));height:58px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:rgba(26,28,34,.96);color:#fff;box-shadow:0 16px 48px rgba(0,0,0,.36);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);overflow:hidden;animation:mini-call-in-v5 .16s ease-out}
 .call-mini-main-v5{min-width:0;height:100%;display:flex;align-items:center;gap:10px;padding:7px 10px;border:0;background:transparent;color:inherit;text-align:left}
@@ -45,7 +46,7 @@
 .call-minimize-action-v5 span{font-size:20px!important}
 
 /* --- Call stability/status polish --- */
-.call-reconnect-v5{position:absolute;z-index:17;left:50%;bottom:calc(132px + env(safe-area-inset-bottom));transform:translateX(-50%);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:8px 12px;background:rgba(18,20,25,.9);color:#fff;font-size:.76rem;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+.call-reconnect-v5{position:fixed;z-index:300;left:50%;bottom:calc(132px + env(safe-area-inset-bottom));transform:translateX(-50%);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:8px 12px;background:rgba(18,20,25,.9);color:#fff;font-size:.76rem;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);white-space:nowrap}
 .audio-person-v3 small,.video-away-v3 span{transition:color .15s ease,opacity .15s ease}
 
 @media(pointer:coarse){
@@ -60,6 +61,7 @@
   .message-more-v3::before{font-size:18px}
   .call-mini-v5{top:calc(7px + env(safe-area-inset-top));height:54px;border-radius:16px}
   .call-mini-icon-v5{width:37px;height:37px;border-radius:11px}
+  .call-reconnect-v5{max-width:calc(100vw - 22px);white-space:normal;text-align:center}
 }
 
 @keyframes spin-v5{to{transform:rotate(360deg)}}
