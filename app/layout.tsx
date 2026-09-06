@@ -6,6 +6,7 @@ import "./mobile-keyboard.css";
 import "./comms-v2.css";
 import "./chat-v4.css";
 import "./ui-v5.css";
+import "./hotfix-v6.css";
 
 export const metadata: Metadata = {
   title: "Manuel Pro",
