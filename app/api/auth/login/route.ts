@@ -29,8 +29,9 @@ export async function POST(request: Request) {
       await ensureInitialized();
     } catch (error) {
       console.error("Automatic database setup failed:", error);
+      const detail = error instanceof Error ? error.message : "Erreur Supabase inconnue";
       return NextResponse.json(
-        { error: "Connecte d'abord la base Supabase au projet dans Vercel." },
+        { error: `Initialisation Supabase impossible : ${detail}` },
         { status: 503 },
       );
     }
