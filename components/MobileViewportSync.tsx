@@ -26,6 +26,7 @@ export default function MobileViewportSync() {
       const top = viewport?.offsetTop ?? 0;
       root.style.setProperty("--visual-height", `${Math.round(height)}px`);
       root.style.setProperty("--visual-top", `${Math.round(top)}px`);
+      root.classList.toggle("keyboard-open", height < window.innerHeight - 120);
 
       const focused = document.activeElement;
       if (focused instanceof HTMLTextAreaElement && focused.closest(".composer")) {
@@ -42,7 +43,7 @@ export default function MobileViewportSync() {
 
     const onClick = (event: MouseEvent) => {
       const target = event.target;
-      if (target instanceof Element && (target.closest(".conversation-item") || target.closest(".back"))) {
+      if (target instanceof Element && target.closest(".conversation-item")) {
         scheduleBottom();
       }
     };
@@ -73,6 +74,7 @@ export default function MobileViewportSync() {
       document.removeEventListener("click", onClick);
       root.style.removeProperty("--visual-height");
       root.style.removeProperty("--visual-top");
+      root.classList.remove("keyboard-open");
     };
   }, []);
 
