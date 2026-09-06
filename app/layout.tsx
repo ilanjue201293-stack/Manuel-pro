@@ -3,7 +3,14 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Chat",
+  title: "Manuel Pro",
+  description: "Messagerie privée",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "Manuel Pro",
+    statusBarStyle: "black-translucent",
+  },
   robots: { index: false, follow: false, nocache: true },
 };
 
@@ -11,6 +18,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
+  themeColor: "#101114",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
