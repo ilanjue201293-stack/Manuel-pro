@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import "./enhancements.css";
+import "./mobile-keyboard.css";
 
 export const metadata: Metadata = {
   title: "Manuel Pro",
