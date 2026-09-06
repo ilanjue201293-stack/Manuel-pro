@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { apiFetch } from "@/lib/client-api";
-import type { ProfileId } from "@/types/chat";
+import type { Conversation, ProfileId } from "@/types/chat";
 
 const NAME_TO_ID: Record<string, ProfileId> = {
   Ilan: "ilan",
@@ -36,6 +36,8 @@ export default function CommunicationEnhancements() {
   const [callHost, setCallHost] = useState<HTMLElement | null>(null);
   const [activityHost, setActivityHost] = useState<HTMLElement | null>(null);
   const [calleeId, setCalleeId] = useState<ProfileId | null>(null);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [headerTitle, setHeaderTitle] = useState("");
   const calleeRef = useRef<ProfileId | null>(null);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
@@ -101,11 +103,14 @@ export default function CommunicationEnhancements() {
 
         const title = header.querySelector<HTMLElement>(".chat-head-copy strong")?.textContent?.trim() || "";
         const subtitle = header.querySelector<HTMLElement>(".chat-head-copy small")?.textContent?.trim() || "";
+        setHeaderTitle((current) => current === title ? current : title);
         setCalleeId(!/membre/i.test(subtitle) ? (NAME_TO_ID[title] || null) : null);
       } else {
         setCallHost(null);
         setActivityHost(null);
         setCalleeId(null);
+        setConversationId(null);
+        setHeaderTitle("");
       }
     };
 
@@ -114,6 +119,23 @@ export default function CommunicationEnhancements() {
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!headerTitle) { setConversationId(null); return; }
+    let cancelled = false;
+    const resolve = async () => {
+      try {
+        const result = await apiFetch<{ conversations: Conversation[] }>("/api/conversations");
+        if (cancelled) return;
+        const exact = result.conversations.find((conversation) => conversation.title === headerTitle);
+        setConversationId(exact?.id || null);
+      } catch {
+        if (!cancelled) setConversationId(null);
+      }
+    };
+    void resolve();
+    return () => { cancelled = true; };
+  }, [headerTitle]);
 
   useEffect(() => {
     const onInput = (event: Event) => {
@@ -163,7 +185,7 @@ export default function CommunicationEnhancements() {
   }, []);
 
   function injectRecording(file: File) {
-    const input = document.querySelector<HTMLInputElement>(".composer input[type='file']:not([accept='image/gif'])");
+    const input = document.querySelector<HTMLInputElement>(".composer input[data-media-input='true']");
     if (!input) throw new Error("Zone de message introuvable");
     const transfer = new DataTransfer();
     transfer.items.add(file);
@@ -263,8 +285,10 @@ export default function CommunicationEnhancements() {
   }
 
   function startCall(type: "audio" | "video") {
-    if (!calleeId) return;
-    window.dispatchEvent(new CustomEvent("MANUEL_PRO_START_CALL", { detail: { calleeId, callType: type } }));
+    if (!conversationId && !calleeId) return;
+    window.dispatchEvent(new CustomEvent("MANUEL_PRO_START_CALL", {
+      detail: { conversationId: conversationId || undefined, calleeId: conversationId ? undefined : calleeId || undefined, callType: type },
+    }));
   }
 
   return <>
@@ -278,7 +302,7 @@ export default function CommunicationEnhancements() {
         {recording && <span className="voice-record-time"><i />{formatDuration(seconds)}</span>}
       </div>, voiceHost,
     )}
-    {callHost && calleeId && createPortal(
+    {callHost && (conversationId || calleeId) && createPortal(
       <div className="header-call-actions">
         <button type="button" className="header-call-button" onClick={() => startCall("audio")} aria-label="Appel audio">📞</button>
         <button type="button" className="header-call-button video" onClick={() => startCall("video")} aria-label="Appel vidéo">▰</button>
