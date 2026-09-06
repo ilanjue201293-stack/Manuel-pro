@@ -43,6 +43,36 @@ export function getPublicVapidKey() {
   return getVapidKeys().publicKey;
 }
 
+async function sendToProfiles(profileIds: string[], payload: Record<string, unknown>, options?: { ttl?: number; urgency?: "very-low" | "low" | "normal" | "high" }) {
+  configureVapid();
+  if (!profileIds.length) return;
+  const supabase = getSupabaseAdmin();
+  const { data: subscriptions } = await supabase
+    .from("push_subscriptions")
+    .select("endpoint,profile_id,p256dh,auth")
+    .in("profile_id", profileIds);
+  if (!subscriptions?.length) return;
+
+  await Promise.allSettled(subscriptions.map(async (row: any) => {
+    try {
+      await webpush.sendNotification({
+        endpoint: row.endpoint,
+        keys: { p256dh: row.p256dh, auth: row.auth },
+      }, JSON.stringify(payload), {
+        TTL: options?.ttl ?? 60 * 60,
+        urgency: options?.urgency ?? "high",
+      });
+    } catch (error) {
+      const status = (error as { statusCode?: number })?.statusCode;
+      if (status === 404 || status === 410) {
+        await supabase.from("push_subscriptions").delete().eq("endpoint", row.endpoint);
+      } else {
+        console.error("Web Push failed:", error);
+      }
+    }
+  }));
+}
+
 export async function sendMessagePush({
   conversationId,
   senderId,
@@ -54,7 +84,6 @@ export async function sendMessagePush({
   content: string;
   mediaName?: string | null;
 }) {
-  configureVapid();
   const supabase = getSupabaseAdmin();
   const [{ data: conversation }, { data: members }] = await Promise.all([
     supabase.from("conversations").select("type,title").eq("id", conversationId).maybeSingle(),
@@ -64,37 +93,34 @@ export async function sendMessagePush({
   const recipients = (members || []).map((member: any) => member.profile_id).filter(Boolean);
   if (!recipients.length) return;
 
-  const { data: subscriptions } = await supabase
-    .from("push_subscriptions")
-    .select("endpoint,profile_id,p256dh,auth")
-    .in("profile_id", recipients);
-  if (!subscriptions?.length) return;
-
   const senderName = PROFILE_NAMES[senderId];
   const title = conversation?.type === "group" && conversation?.title
     ? `${senderName} • ${conversation.title}`
     : senderName;
   const body = content || (mediaName ? `📎 ${mediaName}` : "📎 Nouveau média");
-  const payload = JSON.stringify({
+  await sendToProfiles(recipients, {
+    kind: "message",
     title,
     body: body.slice(0, 180),
     conversationId,
     url: `/?conversation=${encodeURIComponent(conversationId)}`,
   });
+}
 
-  await Promise.allSettled(subscriptions.map(async (row: any) => {
-    try {
-      await webpush.sendNotification({
-        endpoint: row.endpoint,
-        keys: { p256dh: row.p256dh, auth: row.auth },
-      }, payload, { TTL: 60 * 60, urgency: "high" });
-    } catch (error) {
-      const status = (error as { statusCode?: number })?.statusCode;
-      if (status === 404 || status === 410) {
-        await supabase.from("push_subscriptions").delete().eq("endpoint", row.endpoint);
-      } else {
-        console.error("Web Push failed:", error);
-      }
-    }
-  }));
+export async function sendCallPush({
+  callerId,
+  calleeId,
+  callId,
+}: {
+  callerId: ProfileId;
+  calleeId: ProfileId;
+  callId: string;
+}) {
+  await sendToProfiles([calleeId], {
+    kind: "call",
+    title: `Appel de ${PROFILE_NAMES[callerId]}`,
+    body: "📞 Appel audio entrant",
+    callId,
+    url: `/?call=${encodeURIComponent(callId)}`,
+  }, { ttl: 60, urgency: "high" });
 }
