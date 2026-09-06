@@ -1,16 +1,18 @@
 import { NextResponse } from "next/server";
 import { requireApiSession, isErrorResponse } from "@/lib/api";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { ensureCallTypeColumn } from "@/lib/call-schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
 
 async function getCall(id: string, profileId: string) {
+  await ensureCallTypeColumn();
   const supabase = getSupabaseAdmin();
   const { data } = await supabase
     .from("call_sessions")
-    .select("id,caller_id,callee_id,status,created_at,answered_at,ended_at")
+    .select("id,caller_id,callee_id,status,call_type,created_at,answered_at,ended_at")
     .eq("id", id)
     .maybeSingle();
   if (!data || (data.caller_id !== profileId && data.callee_id !== profileId)) return null;
@@ -44,6 +46,7 @@ export async function GET(request: Request, context: Context) {
       callerId: call.caller_id,
       calleeId: call.callee_id,
       status: call.status,
+      callType: call.call_type === "video" ? "video" : "audio",
       createdAt: call.created_at,
       answeredAt: call.answered_at,
       endedAt: call.ended_at,
