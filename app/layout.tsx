@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import "./enhancements.css";
 import "./mobile-keyboard.css";
+import "./comms-v2.css";
 
 export const metadata: Metadata = {
   title: "Manuel Pro",
