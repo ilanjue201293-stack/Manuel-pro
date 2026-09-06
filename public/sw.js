@@ -9,12 +9,25 @@ self.addEventListener("push", (event) => {
     payload = { title: "Nouveau message", body: event.data ? event.data.text() : "" };
   }
 
-  const title = payload.title || "Nouveau message";
+  const isCall = payload.kind === "call";
+  const title = payload.title || (isCall ? "Appel entrant" : "Nouveau message");
   const options = {
-    body: payload.body || "Tu as reçu un nouveau message.",
-    tag: payload.conversationId ? `conversation-${payload.conversationId}` : "manuel-pro-message",
+    body: payload.body || (isCall ? "Touchez pour répondre" : "Tu as reçu un nouveau message."),
+    tag: isCall
+      ? `call-${payload.callId || "incoming"}`
+      : payload.conversationId
+        ? `conversation-${payload.conversationId}`
+        : "manuel-pro-message",
     renotify: true,
-    data: { url: payload.url || "/" },
+    requireInteraction: isCall,
+    silent: false,
+    data: {
+      url: payload.url || "/",
+      kind: payload.kind || "message",
+      callId: payload.callId || null,
+      callType: payload.callType || null,
+    },
+    actions: isCall ? [{ action: "open", title: "Répondre" }] : [],
   };
 
   event.waitUntil((async () => {
@@ -26,9 +39,12 @@ self.addEventListener("push", (event) => {
         client.postMessage({
           type: "MANUEL_PRO_IN_APP_PUSH",
           payload: {
+            kind: payload.kind || "message",
+            callType: payload.callType || null,
             title,
             body: options.body,
             conversationId: payload.conversationId,
+            callId: payload.callId,
             url: payload.url || "/",
           },
         });
