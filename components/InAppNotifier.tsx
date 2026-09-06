@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 
 type ToastPayload = {
+  kind?: "message" | "call";
+  callType?: "audio" | "video";
   title: string;
   body: string;
   url?: string;
@@ -19,15 +21,18 @@ export default function InAppNotifier() {
     const onMessage = (event: MessageEvent) => {
       if (event.data?.type !== "MANUEL_PRO_IN_APP_PUSH") return;
       const payload = event.data.payload || {};
+      const kind = payload.kind === "call" ? "call" : "message";
       setToast({
-        title: typeof payload.title === "string" ? payload.title : "Nouveau message",
-        body: typeof payload.body === "string" ? payload.body : "Tu as reçu un nouveau message.",
+        kind,
+        callType: payload.callType === "video" ? "video" : "audio",
+        title: typeof payload.title === "string" ? payload.title : (kind === "call" ? "Appel entrant" : "Nouveau message"),
+        body: typeof payload.body === "string" ? payload.body : (kind === "call" ? "Touchez pour répondre" : "Tu as reçu un nouveau message."),
         url: typeof payload.url === "string" ? payload.url : undefined,
         conversationId: typeof payload.conversationId === "string" ? payload.conversationId : undefined,
       });
 
       if (timerRef.current) window.clearTimeout(timerRef.current);
-      timerRef.current = window.setTimeout(() => setToast(null), 4500);
+      timerRef.current = window.setTimeout(() => setToast(null), kind === "call" ? 12000 : 4500);
     };
 
     navigator.serviceWorker.addEventListener("message", onMessage);
@@ -39,17 +44,18 @@ export default function InAppNotifier() {
 
   if (!toast) return null;
 
-  function openConversation() {
+  function openTarget() {
     if (timerRef.current) window.clearTimeout(timerRef.current);
     const target = toast?.url || (toast?.conversationId ? `/?conversation=${encodeURIComponent(toast.conversationId)}` : "/");
     setToast(null);
     if (target) window.location.assign(target);
   }
 
+  const isCall = toast.kind === "call";
   return (
-    <div className="in-app-toast" role="status" aria-live="polite">
-      <button className="in-app-toast-main" onClick={openConversation}>
-        <span className="in-app-toast-icon">M</span>
+    <div className={`in-app-toast ${isCall ? "call-toast" : ""}`} role="status" aria-live="polite">
+      <button className="in-app-toast-main" onClick={openTarget}>
+        <span className="in-app-toast-icon">{isCall ? (toast.callType === "video" ? "▰" : "☎") : "M"}</span>
         <span className="in-app-toast-copy">
           <strong>{toast.title}</strong>
           <span>{toast.body}</span>
