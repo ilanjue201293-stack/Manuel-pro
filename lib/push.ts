@@ -6,6 +6,7 @@ import { PROFILE_NAMES } from "@/lib/profiles";
 import type { ProfileId } from "@/types/chat";
 
 const P256_ORDER = BigInt("0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+const ONE = BigInt(1);
 let cachedKeys: { publicKey: string; privateKey: string } | null = null;
 let vapidConfigured = false;
 
@@ -18,7 +19,7 @@ function getSeed() {
 function getVapidKeys() {
   if (cachedKeys) return cachedKeys;
   const digest = createHash("sha256").update(`manuel-pro-web-push:${getSeed()}`).digest("hex");
-  const scalar = (BigInt(`0x${digest}`) % (P256_ORDER - 1n)) + 1n;
+  const scalar = (BigInt(`0x${digest}`) % (P256_ORDER - ONE)) + ONE;
   const privateBytes = Buffer.from(scalar.toString(16).padStart(64, "0"), "hex");
   const ecdh = createECDH("prime256v1");
   ecdh.setPrivateKey(privateBytes);
