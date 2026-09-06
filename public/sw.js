@@ -18,6 +18,24 @@ self.addEventListener("push", (event) => {
   };
 
   event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const visibleWindows = windows.filter((client) => client.visibilityState === "visible" || client.focused === true);
+
+    if (visibleWindows.length > 0) {
+      for (const client of visibleWindows) {
+        client.postMessage({
+          type: "MANUEL_PRO_IN_APP_PUSH",
+          payload: {
+            title,
+            body: options.body,
+            conversationId: payload.conversationId,
+            url: payload.url || "/",
+          },
+        });
+      }
+      return;
+    }
+
     await self.registration.showNotification(title, options);
     if (self.navigator && typeof self.navigator.setAppBadge === "function") {
       try { await self.navigator.setAppBadge(); } catch {}
