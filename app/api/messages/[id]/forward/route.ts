@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireApiSession, isErrorResponse, canAccessMessage, isConversationMember } from "@/lib/api";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
+import { sendMessagePush } from "@/lib/push";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ id: string }> };
@@ -28,5 +29,11 @@ export async function POST(request: Request, context: Context) {
     forwarded_from: source.id,
   }).select("id").single();
   if (error || !data) return NextResponse.json({ error: error?.message || "Transfert impossible" }, { status: 500 });
+  await sendMessagePush({
+    conversationId,
+    senderId: auth.profileId,
+    content: source.content || "↗ Message transféré",
+    mediaName: source.media_name,
+  }).catch((pushError) => console.error("Push notification error:", pushError));
   return NextResponse.json({ id: data.id });
 }
