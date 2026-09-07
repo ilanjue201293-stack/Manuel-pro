@@ -1,0 +1,189 @@
+/* Manuel Pro v7 — native gestures, group settings, seen details, incoming call polish */
+
+/* Old action system is no longer used. */
+.message-more-v3,.message-actions-v3{display:none!important}
+.composer .gif{display:none!important}
+
+/* --- Native message gestures --- */
+.gesture-bubble-v7{
+  touch-action:pan-y;
+  -webkit-touch-callout:none;
+  user-select:none;
+  -webkit-user-select:none;
+  will-change:transform;
+  transition:transform .16s ease,filter .14s ease;
+  position:relative;
+}
+.gesture-bubble-v7.longpress-open-v7{filter:brightness(.96)}
+.gesture-bubble-v7.swiping-v7{transition:none!important}
+.gesture-bubble-v7.swipe-right-v7::before,
+.gesture-bubble-v7.swipe-left-v7::before{
+  position:absolute;
+  top:50%;
+  transform:translateY(-50%);
+  width:34px;
+  height:34px;
+  border-radius:50%;
+  display:grid;
+  place-items:center;
+  background:color-mix(in srgb,var(--accent,#6d5efc) 78%,#17191e);
+  color:#fff;
+  box-shadow:0 6px 18px rgba(0,0,0,.2);
+  font-size:16px;
+  pointer-events:none;
+}
+.message-v3.mine .gesture-bubble-v7.swipe-right-v7::before{content:"↗";left:-46px}
+.message-v3.mine .gesture-bubble-v7.swipe-left-v7::before{content:"↩";right:-46px}
+.message-v3:not(.mine) .gesture-bubble-v7.swipe-right-v7::before{content:"↩";left:-46px}
+.message-v3:not(.mine) .gesture-bubble-v7.swipe-left-v7::before{content:"↗";right:-46px}
+
+.own-message-actions-v7{
+  display:flex;
+  gap:6px;
+  justify-content:flex-end;
+  margin-top:5px;
+  padding-right:2px;
+  animation:action-pop-v7 .13s ease-out;
+}
+.own-message-actions-v7 button{
+  width:36px;
+  height:32px;
+  border:1px solid rgba(255,255,255,.08);
+  border-radius:10px;
+  background:rgba(34,36,42,.9);
+  color:#fff;
+  font-size:16px;
+  box-shadow:0 7px 18px rgba(0,0,0,.15);
+}
+.own-message-actions-v7 button.danger{background:rgba(106,35,41,.55)}
+.theme-light .own-message-actions-v7 button{background:#fff;color:#202126;border-color:rgba(0,0,0,.08)}
+.theme-light .own-message-actions-v7 button.danger{background:#fff1f2;color:#cf3f48}
+
+.reactions-under-v7{
+  position:static!important;
+  display:flex!important;
+  width:max-content!important;
+  max-width:min(390px,calc(100vw - 90px));
+  margin:5px 0 1px!important;
+  padding:6px!important;
+  gap:3px!important;
+  border:1px solid rgba(255,255,255,.09)!important;
+  border-radius:15px!important;
+  background:rgba(31,33,39,.96)!important;
+  box-shadow:0 10px 28px rgba(0,0,0,.22)!important;
+  animation:action-pop-v7 .13s ease-out;
+}
+.reactions-under-v7 button{width:36px!important;height:36px!important;border-radius:10px!important;font-size:20px!important}
+.message-v3:not(.mine) .reactions-under-v7{align-self:flex-start!important}
+.reaction-row.read-only-v7{pointer-events:none}
+.reaction-display-v7{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.07);font-size:.72em}
+
+.seen-clickable-v7{
+  border:0;
+  background:transparent;
+  padding:0;
+  cursor:pointer;
+  color:#4fa4ff!important;
+}
+.seen-clickable-v7:active{opacity:.65}
+
+/* --- Group avatars / header --- */
+.group-avatar-image-v7{
+  width:46px;
+  height:46px;
+  flex:0 0 46px;
+  object-fit:cover;
+  border-radius:50%;
+  display:block;
+  background:#23262d;
+}
+.group-avatar-image-v7.small-v7{width:40px;height:40px;flex-basis:40px}
+.group-head-main-v7{
+  min-width:0;
+  flex:1;
+  display:flex;
+  align-items:center;
+  gap:10px;
+  border:0;
+  background:transparent;
+  color:inherit;
+  padding:0;
+  text-align:left;
+}
+.group-head-main-v7 .chat-head-copy{min-width:0;display:flex;flex-direction:column}
+.group-head-main-v7:active{opacity:.72}
+
+/* --- Group settings --- */
+.group-settings-modal-v7{width:min(520px,calc(100vw - 24px));max-height:min(760px,88vh);overflow:auto}
+.group-settings-hero-v7{display:flex;flex-direction:column;align-items:center;gap:9px;padding:4px 0 16px}
+.group-photo-button-v7{position:relative;width:92px;height:92px;border:0;border-radius:50%;padding:0;background:linear-gradient(145deg,var(--accent,#6d5efc),#414759);color:#fff;overflow:hidden;font-size:28px;font-weight:800}
+.group-photo-button-v7>img{width:100%;height:100%;object-fit:cover}
+.group-photo-button-v7>b{position:absolute;right:1px;bottom:1px;width:31px;height:31px;display:grid;place-items:center;border:3px solid #1b1d22;border-radius:50%;background:#2a2d34;font-size:13px}
+.group-photo-actions-v7{display:flex;gap:12px}.danger-text-v7{color:#ff777d!important}
+.group-name-row-v7{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;align-items:center;margin-bottom:18px}
+.group-name-row-v7 .button{height:42px;padding-inline:13px}
+.group-members-title-v7{margin-bottom:8px}
+.group-members-v7{display:flex;flex-direction:column;gap:4px;margin-bottom:18px}
+.group-member-v7{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px;border-radius:13px;background:rgba(255,255,255,.035)}
+.group-member-v7>span{min-width:0;display:flex;flex-direction:column}.group-member-v7>span strong{overflow:hidden;text-overflow:ellipsis}.group-member-v7>span small{opacity:.5;font-size:.72rem}
+.remove-member-v7{border:0;border-radius:9px;padding:7px 9px;background:rgba(229,72,77,.12);color:#ff7b82;font-size:.75rem}
+.delete-group-v7{margin-top:4px}
+
+/* --- Seen details --- */
+.seen-modal-v7{width:min(390px,calc(100vw - 24px))}
+.seen-people-v7{display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow:auto}
+.seen-person-v7{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px;border-radius:12px;background:rgba(255,255,255,.04)}
+.seen-person-v7 span{font-size:.72rem;color:#4fa4ff;font-weight:700}
+
+/* --- Incoming calls: always a true isolated full-screen UI --- */
+.incoming-call-v3{
+  position:fixed!important;
+  inset:0!important;
+  z-index:500!important;
+  display:grid!important;
+  place-items:center!important;
+  padding:calc(20px + env(safe-area-inset-top)) 18px calc(20px + env(safe-area-inset-bottom))!important;
+  background:radial-gradient(circle at 50% 28%,color-mix(in srgb,var(--accent,#6d5efc) 30%,#1b1f2a),#08090c 66%)!important;
+  color:#fff!important;
+  overflow:hidden!important;
+}
+.incoming-call-v3 .incoming-panel-v3{
+  position:relative!important;
+  inset:auto!important;
+  width:min(430px,100%)!important;
+  min-height:520px!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:center!important;
+  justify-content:center!important;
+  gap:8px!important;
+  margin:0!important;
+  padding:34px 20px 28px!important;
+  border:1px solid rgba(255,255,255,.09)!important;
+  border-radius:30px!important;
+  background:rgba(18,20,25,.68)!important;
+  box-shadow:0 28px 90px rgba(0,0,0,.48)!important;
+  backdrop-filter:blur(26px)!important;
+  -webkit-backdrop-filter:blur(26px)!important;
+}
+.incoming-call-v3 .call-pulse{margin-bottom:12px!important}
+.incoming-call-v3 h2{margin:0!important;font-size:1.8rem!important}
+.incoming-call-v3 p{margin:2px 0 0!important;opacity:.68!important;font-size:.95rem!important}
+.incoming-call-v3 .call-actions.incoming{position:static!important;width:100%!important;display:flex!important;justify-content:space-evenly!important;gap:34px!important;margin-top:46px!important;padding:0!important;background:none!important}
+.incoming-call-v3 .call-action{display:flex!important;flex-direction:column!important;align-items:center!important;gap:8px!important;border:0!important;background:transparent!important;color:#fff!important}
+.incoming-call-v3 .call-action span{width:68px!important;height:68px!important;display:grid!important;place-items:center!important;border-radius:50%!important;font-size:25px!important}
+.incoming-call-v3 .call-action.decline span{background:#e5484d!important}
+.incoming-call-v3 .call-action.accept span{background:#28c76f!important}
+.incoming-call-v3 .call-action small{font-size:.78rem!important;color:#fff!important}
+.incoming-video-v7 .call-action.accept span{font-size:25px!important}
+
+@media(max-width:760px){
+  .reactions-under-v7{max-width:calc(100vw - 66px)}
+  .reactions-under-v7 button{width:34px!important;height:34px!important;font-size:19px!important}
+  .group-settings-modal-v7{max-height:84vh}
+  .group-name-row-v7{grid-template-columns:1fr}.group-name-row-v7 .button{width:100%}
+  .incoming-call-v3 .incoming-panel-v3{min-height:min(560px,calc(100vh - 60px))!important;border-radius:26px!important}
+  .incoming-call-v3 .call-actions.incoming{margin-top:34px!important}
+}
+
+@keyframes action-pop-v7{from{opacity:0;transform:translateY(-3px) scale(.97)}to{opacity:1;transform:none}}
