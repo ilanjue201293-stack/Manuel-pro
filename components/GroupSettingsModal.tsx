@@ -1,11 +1,18 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Modal from "@/components/Modal";
 import Avatar from "@/components/Avatar";
 import { apiFetch } from "@/lib/client-api";
 import { getUploadClient } from "@/lib/client-supabase";
-import type { Conversation, ProfileId } from "@/types/chat";
+import type { Conversation, ProfileId, PublicProfile } from "@/types/chat";
+
+const FALLBACK_PROFILES: PublicProfile[] = [
+  { id: "ilan", displayName: "Ilan", avatarUrl: "/avatars/ilan.svg" },
+  { id: "naim", displayName: "Naïm", avatarUrl: "/avatars/naim.svg" },
+  { id: "juul", displayName: "Juul", avatarUrl: "/avatars/juul.svg" },
+  { id: "ruben", displayName: "Ruben", avatarUrl: "/avatars/ruben.svg" },
+];
 
 function initials(value: string) {
   return value.trim().slice(0, 2).toUpperCase() || "G";
@@ -27,7 +34,27 @@ export default function GroupSettingsModal({
   const [title, setTitle] = useState(conversation.title);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [profiles, setProfiles] = useState<PublicProfile[]>(FALLBACK_PROFILES);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setTitle(conversation.title);
+  }, [conversation.title]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const result = await apiFetch<{ profiles: PublicProfile[] }>("/api/presence");
+        if (!cancelled && result.profiles?.length) setProfiles(result.profiles);
+      } catch {}
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const memberIds = useMemo(() => new Set(conversation.members.map((member) => member.id)), [conversation.members]);
+  const candidates = useMemo(() => profiles.filter((profile) => !memberIds.has(profile.id)), [profiles, memberIds]);
 
   async function saveTitle() {
     const next = title.trim();
@@ -79,6 +106,19 @@ export default function GroupSettingsModal({
       await onUpdated();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Impossible de retirer la photo");
+    } finally { setBusy(false); }
+  }
+
+  async function addMember(profile: PublicProfile) {
+    setBusy(true); setError("");
+    try {
+      await apiFetch(`/api/conversations/${conversation.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ addMember: profile.id }),
+      });
+      await onUpdated();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Impossible d’ajouter cette personne");
     } finally { setBusy(false); }
   }
 
@@ -145,6 +185,19 @@ export default function GroupSettingsModal({
           </div>
         ))}
       </div>
+
+      {candidates.length > 0 && <>
+        <div className="settings-label group-members-title-v7 add-members-title-v8">Ajouter des membres</div>
+        <div className="group-members-v7 add-members-v8">
+          {candidates.map((profile) => (
+            <div className="group-member-v7" key={profile.id}>
+              <Avatar src={profile.avatarUrl} profileId={profile.id} name={profile.displayName} size={38} online={profile.online} />
+              <span><strong>{profile.displayName}</strong></span>
+              <button className="add-member-v8" disabled={busy} onClick={() => void addMember(profile)}>Ajouter</button>
+            </div>
+          ))}
+        </div>
+      </>}
 
       {error && <div className="form-error">{error}</div>}
       <button className="button danger full delete-group-v7" disabled={busy} onClick={() => void deleteGroup()}>Supprimer le groupe</button>
