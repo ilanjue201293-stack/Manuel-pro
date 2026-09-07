@@ -10,6 +10,7 @@ import VoicePlayerEnhancer from "@/components/VoicePlayerEnhancer";
 import UiPolishV5 from "@/components/UiPolishV5";
 import CallUiV5 from "@/components/CallUiV5";
 import IncomingCallPolishV7 from "@/components/IncomingCallPolishV7";
+import CallSounds from "@/components/CallSounds";
 import CallManager from "@/components/CallManager";
 import { apiFetch } from "@/lib/client-api";
 import type { PublicProfile, UserSettings } from "@/types/chat";
@@ -44,6 +45,7 @@ export default function RootApp() {
     <CallManager me={me.profile} />
     <CallUiV5 />
     <IncomingCallPolishV7 />
+    <CallSounds />
     <InAppNotifier />
   </>;
 }
