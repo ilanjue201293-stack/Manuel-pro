@@ -8,6 +8,7 @@ import "./chat-v4.css";
 import "./ui-v5.css";
 import "./hotfix-v6.css";
 import "./longpress-v6.css";
+import "./ui-v7.css";
 
 export const metadata: Metadata = {
   title: "Manuel Pro",
