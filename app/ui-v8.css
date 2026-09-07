@@ -1,0 +1,62 @@
+/* Manuel Pro v8 — composer/call/group fixes */
+
+/* Composer: after removing GIF there are only + / voice / textarea / send. */
+.composer:has(.voice-tools-host){
+  grid-template-columns:auto auto minmax(0,1fr) auto!important;
+}
+.composer .send{
+  width:42px!important;
+  min-width:42px!important;
+  max-width:42px!important;
+  padding:0!important;
+  justify-self:end!important;
+  flex:0 0 42px!important;
+}
+.composer textarea{min-width:0!important;width:100%!important}
+
+/* Put call controls back at the far right, audio then video, like before. */
+.call-tools-host{
+  margin-left:auto!important;
+  order:100!important;
+  flex:0 0 auto!important;
+}
+.header-call-actions{
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:center!important;
+  justify-content:flex-end!important;
+  gap:7px!important;
+}
+.header-call-actions .header-call-button:not(.video){order:1!important}
+.header-call-actions .header-call-button.video{order:2!important}
+.chat-head-copy,.group-head-main-v7{min-width:0}
+
+/* Group member add action. */
+.add-members-title-v8{margin-top:4px!important}
+.add-members-v8{margin-bottom:18px!important}
+.add-member-v8{
+  border:0;
+  border-radius:9px;
+  padding:7px 10px;
+  background:color-mix(in srgb,var(--accent,#6d5efc) 18%,transparent);
+  color:color-mix(in srgb,var(--accent,#6d5efc) 78%,white);
+  font-size:.75rem;
+  font-weight:750;
+}
+.add-member-v8:disabled{opacity:.45}
+
+/* Incoming call must always stay above every chat/modal layer and accept touches. */
+.incoming-call-v3{
+  z-index:1000!important;
+  pointer-events:auto!important;
+  isolation:isolate!important;
+}
+.incoming-call-v3 .incoming-panel-v3,
+.incoming-call-v3 .call-actions,
+.incoming-call-v3 .call-action{pointer-events:auto!important}
+
+@media(max-width:760px){
+  .composer:has(.voice-tools-host){grid-template-columns:auto auto minmax(0,1fr) auto!important}
+  .composer .send{width:40px!important;min-width:40px!important;max-width:40px!important;flex-basis:40px!important}
+  .header-call-actions{gap:4px!important}
+}
