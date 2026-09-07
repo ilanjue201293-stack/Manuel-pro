@@ -27,6 +27,28 @@ export async function PATCH(request: Request, context: Context) {
   const body = await request.json().catch(() => ({}));
   const supabase = getSupabaseAdmin();
 
+  if (typeof body.addMember === "string") {
+    const memberId = body.addMember;
+    if (!isProfileId(memberId)) return NextResponse.json({ error: "Membre invalide" }, { status: 400 });
+
+    const { data: existing, error: existingError } = await supabase
+      .from("conversation_members")
+      .select("profile_id")
+      .eq("conversation_id", id)
+      .eq("profile_id", memberId)
+      .maybeSingle();
+    if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
+    if (existing) return NextResponse.json({ error: "Cette personne est déjà dans le groupe" }, { status: 409 });
+
+    const { error } = await supabase.from("conversation_members").insert({
+      conversation_id: id,
+      profile_id: memberId,
+    });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await supabase.from("conversations").update({ updated_at: new Date().toISOString() }).eq("id", id);
+    return NextResponse.json({ ok: true });
+  }
+
   if (typeof body.removeMember === "string") {
     const memberId = body.removeMember;
     if (!isProfileId(memberId) || memberId === auth.profileId) {
