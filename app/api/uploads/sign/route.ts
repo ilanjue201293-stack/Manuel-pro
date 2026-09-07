@@ -18,18 +18,19 @@ export async function POST(request: Request) {
   const fileName = typeof body.fileName === "string" ? body.fileName : "file";
   const contentType = typeof body.contentType === "string" ? body.contentType : "application/octet-stream";
   const size = Number(body.size || 0);
-  const kind = body.kind === "avatar" ? "avatar" : "message";
+  const kind = body.kind === "avatar" ? "avatar" : body.kind === "group-avatar" ? "group-avatar" : "message";
 
-  const max = kind === "avatar" ? 10 * 1024 * 1024 : 50 * 1024 * 1024;
+  const imageKind = kind === "avatar" || kind === "group-avatar";
+  const max = imageKind ? 10 * 1024 * 1024 : 50 * 1024 * 1024;
   if (!Number.isFinite(size) || size <= 0 || size > max) {
-    return NextResponse.json({ error: `Fichier trop gros (max ${kind === "avatar" ? "10" : "50"} Mo)` }, { status: 400 });
+    return NextResponse.json({ error: `Fichier trop gros (max ${imageKind ? "10" : "50"} Mo)` }, { status: 400 });
   }
 
-  if (kind === "avatar" && !contentType.startsWith("image/")) {
-    return NextResponse.json({ error: "L'avatar doit être une image" }, { status: 400 });
+  if (imageKind && !contentType.startsWith("image/")) {
+    return NextResponse.json({ error: "La photo doit être une image" }, { status: 400 });
   }
 
-  const folder = kind === "avatar" ? "avatars" : "messages";
+  const folder = kind === "avatar" ? "avatars" : kind === "group-avatar" ? "group-images" : "messages";
   const path = `${folder}/${auth.profileId}/${randomUUID()}-${safeName(fileName)}`;
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.storage.from(MEDIA_BUCKET).createSignedUploadUrl(path);
