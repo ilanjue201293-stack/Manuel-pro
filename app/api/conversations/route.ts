@@ -65,7 +65,11 @@ export async function GET() {
       id: conversation.id,
       type: conversation.type,
       title: conversation.type === "dm" ? (other?.displayName || "Discussion") : (conversation.title || "Groupe"),
-      avatarUrl: conversation.type === "dm" ? (other?.avatarUrl || null) : null,
+      avatarUrl: conversation.type === "dm"
+        ? (other?.avatarUrl || null)
+        : conversation.image_path
+          ? `/api/conversations/${conversation.id}/avatar?v=${encodeURIComponent(conversation.image_path)}`
+          : null,
       members: publicMembers,
       lastMessage: last ? {
         content: last.deleted_at ? "Message supprimé" : (last.content || (last.media_name ? `📎 ${last.media_name}` : "Média")),
