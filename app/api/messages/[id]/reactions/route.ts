@@ -16,6 +16,12 @@ export async function POST(request: Request, context: Context) {
   if (!ALLOWED.includes(emoji)) return NextResponse.json({ error: "Réaction invalide" }, { status: 400 });
 
   const supabase = getSupabaseAdmin();
+  const { data: message } = await supabase.from("messages").select("sender_id").eq("id", id).maybeSingle();
+  if (!message) return NextResponse.json({ error: "Message introuvable" }, { status: 404 });
+  if (message.sender_id === auth.profileId) {
+    return NextResponse.json({ error: "Tu ne peux pas réagir à ton propre message" }, { status: 400 });
+  }
+
   const { data: existing } = await supabase
     .from("message_reactions")
     .select("message_id")
