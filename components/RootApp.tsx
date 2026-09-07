@@ -9,7 +9,6 @@ import CommunicationEnhancements from "@/components/CommunicationEnhancements";
 import VoicePlayerEnhancer from "@/components/VoicePlayerEnhancer";
 import UiPolishV5 from "@/components/UiPolishV5";
 import CallUiV5 from "@/components/CallUiV5";
-import LongPressMessageActions from "@/components/LongPressMessageActions";
 import CallManager from "@/components/CallManager";
 import { apiFetch } from "@/lib/client-api";
 import type { PublicProfile, UserSettings } from "@/types/chat";
@@ -41,7 +40,6 @@ export default function RootApp() {
     <CommunicationEnhancements />
     <VoicePlayerEnhancer />
     <UiPolishV5 />
-    <LongPressMessageActions />
     <CallManager me={me.profile} />
     <CallUiV5 />
     <InAppNotifier />
